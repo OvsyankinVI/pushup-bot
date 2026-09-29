@@ -5,6 +5,7 @@ from contextvars import ContextVar
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+from app.safe_logging import log_exception
 from app.summaries import display_user, format_summary, today_moscow
 
 logger = logging.getLogger(__name__)
@@ -88,9 +89,8 @@ def build_application(settings, db):
             f'✅ {name} кружок зафиксирован, но отжимания ли там? Я не знаю 🤨')
 
     async def error_handler(update, context):
-        # Do not log exception text/tracebacks: SDK errors can contain credentials.
         update_failed.set(True)
-        logger.error('Telegram update failed (%s)', type(context.error).__name__)
+        log_exception(logger, 'Telegram update failed', context.error, settings)
 
     for command, callback in [('start', start), ('join', join), ('members', members),
                               ('today', today), ('chatid', chatid), ('myid', myid)]:

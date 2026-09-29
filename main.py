@@ -9,6 +9,7 @@ from telegram import Update
 
 from app.config import Settings
 from app.database import Database
+from app.safe_logging import log_exception
 from app.summaries import format_summary, midnight_report_date, today_moscow
 from app.telegram_bot import build_application, update_failed
 
@@ -35,7 +36,7 @@ async def lifespan(app):
             finally:
                 await telegram.stop()
     except Exception as exc:
-        logger.error('Application lifecycle failed (%s)', type(exc).__name__)
+        log_exception(logger, 'Application lifecycle failed', exc, settings)
         raise RuntimeError('Application lifecycle failed; check configuration and connectivity') from None
 
 
@@ -76,7 +77,7 @@ async def webhook(request: Request,
         except HTTPException:
             raise
         except Exception as exc:
-            logger.error('Webhook failed (%s)', type(exc).__name__)
+            log_exception(logger, 'Webhook failed', exc, settings)
             raise HTTPException(503, 'Update processing failed') from None
         finally:
             update_failed.reset(marker)
@@ -96,7 +97,7 @@ async def send_summary(request, secret, kind):
             chat_id=settings.telegram_chat_id,
             text=format_summary(members, reported, day, kind))
     except Exception as exc:
-        logger.error('Summary failed (%s)', type(exc).__name__)
+        log_exception(logger, 'Summary failed', exc, settings)
         raise HTTPException(503, 'Summary delivery failed') from None
     return {'status': 'ok', 'report_date': day.isoformat()}
 
