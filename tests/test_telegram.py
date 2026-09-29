@@ -4,9 +4,24 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telegram import Update
-from telegram.ext import MessageHandler
+from telegram.ext import CommandHandler, MessageHandler
 
 from app.telegram_bot import build_application
+
+
+@pytest.mark.parametrize('chat_type', ['private', 'group', 'supergroup'])
+def test_myid(chat_type):
+    application = build_application(SimpleNamespace(telegram_bot_token='123:test'), MagicMock())
+    handler = next(h for h in application.handlers[0]
+                   if isinstance(h, CommandHandler) and 'myid' in h.commands)
+    message = SimpleNamespace(sender_chat=None, reply_text=AsyncMock())
+    update = SimpleNamespace(message=message,
+                             effective_chat=SimpleNamespace(id=-100, type=chat_type),
+                             effective_user=SimpleNamespace(id=123456789))
+
+    asyncio.run(handler.callback(update, None))
+
+    message.reply_text.assert_awaited_once_with('🆔 Ваш Telegram ID: 123456789')
 
 
 @pytest.mark.parametrize('active, registered, expected', [(True, True, 2),

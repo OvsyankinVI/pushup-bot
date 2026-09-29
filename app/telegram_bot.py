@@ -30,6 +30,11 @@ def build_application(settings, db):
     async def start(update, context):
         await update.message.reply_text('🏋️ Бот отжиманий на связи!')
 
+    async def myid(update, context):
+        if update.effective_user is None or update.message.sender_chat:
+            return
+        await update.message.reply_text(f'🆔 Ваш Telegram ID: {update.effective_user.id}')
+
     async def join(update, context):
         if not await group_only(update):
             return
@@ -88,7 +93,7 @@ def build_application(settings, db):
         logger.error('Telegram update failed (%s)', type(context.error).__name__)
 
     for command, callback in [('start', start), ('join', join), ('members', members),
-                              ('today', today), ('chatid', chatid)]:
+                              ('today', today), ('chatid', chatid), ('myid', myid)]:
         application.add_handler(CommandHandler(command, callback, filters=filters.UpdateType.MESSAGE))
     application.add_handler(MessageHandler(
         filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE, video_note))
