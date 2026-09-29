@@ -83,7 +83,9 @@ def build_application(settings, db):
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member['active']:
             return
-        await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
+        created = await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
+        if not created:
+            return
         name = display_user(user.username, user.full_name)
         await update.message.reply_text(
             f'✅ {name} кружок зафиксирован, но отжимания ли там? Я не знаю 🤨')

@@ -66,11 +66,15 @@ def test_display_user(username, expected):
 def test_report_conflict_and_schema():
     client = MagicMock()
     db = Database(client)
-    for _ in range(2):
-        db.record(-100, 1, date(2026, 9, 29))
+    from types import SimpleNamespace
+    client.table.return_value.upsert.return_value.execute.side_effect = [
+        SimpleNamespace(data=[{'id': 1}]), SimpleNamespace(data=[])]
+    assert db.record(-100, 1, date(2026, 9, 29)) is True
+    assert db.record(-100, 1, date(2026, 9, 29)) is False
     client.table.return_value.upsert.assert_called_with(
         {'chat_id': -100, 'telegram_user_id': 1, 'report_date': '2026-09-29'},
-        on_conflict='chat_id,telegram_user_id,report_date', ignore_duplicates=True)
+        on_conflict='chat_id,telegram_user_id,report_date', ignore_duplicates=True,
+        returning='representation')
     sql = (Path(__file__).parents[1] / 'sql/schema.sql').read_text()
     assert 'unique (chat_id, telegram_user_id, report_date)' in sql
     assert 'unique (chat_id, telegram_user_id)' in sql

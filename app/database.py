@@ -25,11 +25,14 @@ class Database:
                 .eq('telegram_user_id', user_id).execute())
         return bool(inserted)
 
-    def record(self, chat_id: int, user_id: int, day: date):
-        (self.client.table('daily_reports').upsert(
+    def record(self, chat_id: int, user_id: int, day: date) -> bool:
+        # Only the INSERT winner returns a row; conflicts return an empty list.
+        inserted = (self.client.table('daily_reports').upsert(
             dict(chat_id=chat_id, telegram_user_id=user_id, report_date=day.isoformat()),
-            on_conflict='chat_id,telegram_user_id,report_date', ignore_duplicates=True)
-            .execute())
+            on_conflict='chat_id,telegram_user_id,report_date', ignore_duplicates=True,
+            returning='representation')
+            .execute().data)
+        return bool(inserted)
 
     def members(self, chat_id: int) -> list[dict]:
         return (self.client.table('members').select('*').eq('chat_id', chat_id)
