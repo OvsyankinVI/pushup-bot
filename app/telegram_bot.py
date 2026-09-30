@@ -6,7 +6,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.safe_logging import log_exception
-from app.summaries import display_user, format_summary, today_moscow
+from app.summaries import format_summary, today_moscow
 
 logger = logging.getLogger(__name__)
 update_failed = ContextVar('update_failed', default=False)
@@ -83,12 +83,7 @@ def build_application(settings, db):
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member['active']:
             return
-        created = await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
-        if not created:
-            return
-        name = display_user(user.username, user.full_name)
-        await update.message.reply_text(
-            f'✅ {name} кружок зафиксирован, но отжимания ли там? Я не знаю 🤨')
+        await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
 
     async def error_handler(update, context):
         update_failed.set(True)

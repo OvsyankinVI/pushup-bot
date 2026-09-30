@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.database import Database
-from app.summaries import display_user, format_summary, midnight_report_date, today_moscow
+from app.summaries import format_summary, midnight_report_date, today_moscow
 
 
 @pytest.mark.parametrize('instant, expected', [
@@ -56,11 +56,6 @@ def test_empty_group():
     text = format_summary([], set(), date(2026, 9, 29), 'evening')
     assert 'Пока нет активных участников' in text
     assert 'филонит' not in text
-
-
-@pytest.mark.parametrize('username, expected', [('vlad', '@vlad'), (None, 'Влад')])
-def test_display_user(username, expected):
-    assert display_user(username, 'Влад') == expected
 
 
 def test_report_conflict_and_schema():

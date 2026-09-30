@@ -16,10 +16,6 @@ def midnight_report_date(now: datetime | None = None) -> date:
     return today_moscow(now) - timedelta(days=1)
 
 
-def display_user(username: str | None, display_name: str) -> str:
-    return f'@{username}' if username else display_name
-
-
 def format_summary(members: list[dict], reported: set[int], report_date: date,
                    kind: str = 'today') -> str:
     titles = {

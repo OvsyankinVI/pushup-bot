@@ -3,10 +3,22 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from telegram import Update
+from telegram import Bot, Update
 from telegram.ext import CommandHandler, MessageHandler
 
 from app.telegram_bot import build_application
+
+
+@pytest.fixture
+def silent_telegram(monkeypatch):
+    calls = []
+    for method in ('send_message', 'set_message_reaction', 'get_file'):
+        mock = AsyncMock()
+        monkeypatch.setattr(Bot, method, mock)
+        calls.append(mock)
+    yield
+    for mock in calls:
+        mock.assert_not_called()
 
 
 @pytest.mark.parametrize('chat_type', ['private', 'group', 'supergroup'])
@@ -27,7 +39,7 @@ def test_myid(chat_type):
 @pytest.mark.parametrize('active, registered, expected', [(True, True, 2),
                                                          (False, True, 0),
                                                          (True, False, 0)])
-def test_video_handler(active, registered, expected):
+def test_video_handler(active, registered, expected, silent_telegram):
     db = MagicMock()
     db.member.return_value = {'active': active} if registered else None
     db.record.side_effect = [True, False]
@@ -44,10 +56,8 @@ def test_video_handler(active, registered, expected):
 
     asyncio.run(run())
     assert db.record.call_count == expected
-    assert message.reply_text.await_count == (1 if expected else 0)
+    message.reply_text.assert_not_called()
     if expected:
-        assert message.reply_text.call_args.args[0] == (
-            '✅ Влад кружок зафиксирован, но отжимания ли там? Я не знаю 🤨')
         assert db.record.call_args.args[:2] == (-100, 42)
 
 
@@ -86,8 +96,9 @@ def test_lifecycle(monkeypatch):
 
 
 @pytest.mark.parametrize('concurrent', [False, True])
-@pytest.mark.parametrize('username, name', [(None, 'Влад'), ('vlad', '@vlad')])
-def test_video_atomic_insert_and_next_moscow_day(monkeypatch, concurrent, username, name):
+@pytest.mark.parametrize('username', [None, 'vlad'])
+def test_video_atomic_insert_and_next_moscow_day(
+        monkeypatch, concurrent, username, silent_telegram):
     from datetime import datetime
     from threading import Lock
     from app.database import Database
@@ -100,6 +111,7 @@ def test_video_atomic_insert_and_next_moscow_day(monkeypatch, concurrent, userna
     def upsert(data, **options):
         assert options == dict(on_conflict='chat_id,telegram_user_id,report_date',
                                ignore_duplicates=True, returning='representation')
+        assert set(data) == {'chat_id', 'telegram_user_id', 'report_date'}
         key = (data['chat_id'], data['telegram_user_id'], data['report_date'])
 
         def execute():
@@ -129,17 +141,20 @@ def test_video_atomic_insert_and_next_moscow_day(monkeypatch, concurrent, userna
             await asyncio.gather(handler.callback(update, None), handler.callback(update, None))
         else:
             await handler.callback(update, None)
-            message.reply_text.assert_awaited_once()
+            assert rows == {(-100, 42, '2026-09-29')}
+            message.reply_text.assert_not_called()
             await handler.callback(update, None)
         assert len(rows) == 1
-        message.reply_text.assert_awaited_once_with(
-            f'✅ {name} кружок зафиксирован, но отжимания ли там? Я не знаю 🤨')
-        message.reply_text.reset_mock()
+        message.reply_text.assert_not_called()
         await handler.callback(update, None)
-        message.reply_text.assert_not_awaited()
+        message.reply_text.assert_not_called()
+        assert rows == {(-100, 42, '2026-09-29')}
         instant = datetime.fromisoformat('2026-09-29T21:00:00+00:00')
         await handler.callback(update, None)
-        message.reply_text.assert_awaited_once()
+        message.reply_text.assert_not_called()
         assert rows == {(-100, 42, '2026-09-29'), (-100, 42, '2026-09-30')}
 
     asyncio.run(run())
+
+    client.table.return_value.select.assert_not_called()
+    assert all(call.args == ('daily_reports',) for call in client.table.call_args_list)
