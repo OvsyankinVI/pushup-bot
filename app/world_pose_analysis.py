@@ -38,6 +38,10 @@ def _motion_coupling(elbows,shoulder_heights):
     corr=_pearson(de,ds)
     return abs(corr) if corr is not None else None,len(de)
 
+def _context_verticality(timeline,start,end):
+    values=[timeline[i]['verticality'] for i in range(max(0,start),min(len(timeline),end)) if timeline[i] and timeline[i].get('verticality') is not None]
+    return _median(values),len(values)
+
 def _segments(mask,min_frames=3):
     mask=list(mask)
     for i in range(1,len(mask)-1):
@@ -98,12 +102,13 @@ def analyze_world_pose(video_path:str,sample_fps:float=6.0)->dict:
                     if verticality<=.60 and body_angle>=140:pushup_like+=1
                 timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle,'shoulder_y':shoulder[1]})
     finally:capture.release()
-    pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)));min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));segment_details=[];gated_count=gated_frames=counted_segments=0
+    pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)));min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));context_window_s=3.0;context_frames=max(1,int(actual_fps*context_window_s));segment_details=[];gated_count=gated_frames=counted_segments=0
     for start,end in segments:
         rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows];shoulders=[r['shoulder_y'] for r in rows]
         count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90);coupling,coupling_samples=_motion_coupling(elbows,shoulders)
+        strict_horizontal_ratio=sum(1 for v in verticalities if v is not None and v<=.55)/len(verticalities) if verticalities else 0.0;pre_v,pre_frames=_context_verticality(timeline,start-context_frames,start);post_v,post_frames=_context_verticality(timeline,end,end+context_frames)
         gated_frames+=frames
         if counted:gated_count+=count;counted_segments+=1
-        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None,'motion_coupling':round(coupling,3) if coupling is not None else None,'coupling_samples':coupling_samples})
+        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None,'motion_coupling':round(coupling,3) if coupling is not None else None,'coupling_samples':coupling_samples,'strict_horizontal_ratio':round(strict_horizontal_ratio,3),'pre_verticality':round(pre_v,3) if pre_v is not None else None,'post_verticality':round(post_v,3) if post_v is not None else None,'pre_context_frames':pre_frames,'post_context_frames':post_frames})
     denominator=world_frames or 1
-    return {'sampled_frames':sampled,'world_frames':world_frames,'world_pose_ratio':world_frames/sampled if sampled else 0.0,'horizontal_ratio':horizontal/denominator,'vertical_ratio':vertical/denominator,'straight_body_ratio':straight/denominator,'pushup_pose_ratio':pushup_like/denominator,'median_torso_verticality':_median(torso_verticalities),'median_body_line_deg':_median(body_angles),'gated_frames':gated_frames,'gated_ratio':gated_frames/sampled if sampled else 0.0,'gated_segments':len(segments),'counted_segments':counted_segments,'gated_pushup_count':gated_count,'segment_details':segment_details,'actual_sample_fps':actual_fps,'min_counted_segment_s':min_counted_duration_s}
+    return {'sampled_frames':sampled,'world_frames':world_frames,'world_pose_ratio':world_frames/sampled if sampled else 0.0,'horizontal_ratio':horizontal/denominator,'vertical_ratio':vertical/denominator,'straight_body_ratio':straight/denominator,'pushup_pose_ratio':pushup_like/denominator,'median_torso_verticality':_median(torso_verticalities),'median_body_line_deg':_median(body_angles),'gated_frames':gated_frames,'gated_ratio':gated_frames/sampled if sampled else 0.0,'gated_segments':len(segments),'counted_segments':counted_segments,'gated_pushup_count':gated_count,'segment_details':segment_details,'actual_sample_fps':actual_fps,'min_counted_segment_s':min_counted_duration_s,'context_window_s':context_window_s}
