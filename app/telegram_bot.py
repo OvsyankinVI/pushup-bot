@@ -11,6 +11,7 @@ from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
 from app.summaries import format_summary, today_moscow
+from app.world_pose_analysis import analyze_world_pose
 
 logger = logging.getLogger(__name__)
 update_failed = ContextVar('update_failed', default=False)
@@ -82,6 +83,8 @@ def build_application(settings, db):
                 raise ValueError('Downloaded video note is empty')
 
             metrics = await asyncio.to_thread(analyze_pose_visibility, temp_path)
+            world = await asyncio.to_thread(analyze_world_pose, temp_path)
+            metrics['world_geometry'] = world
             classification = classify_pushup_attempt(metrics)
             status = classification['status']; class_reason = classification['reason']
             confidence = round(metrics['usable_ratio'], 4)
@@ -97,8 +100,15 @@ def build_application(settings, db):
                 f"pushup_pose={geometry.get('pushup_pose_ratio',0):.3f},"
                 f"tilt={geometry.get('median_torso_tilt_deg')},"
                 f"bodyline={geometry.get('median_body_line_deg')}")
+            world_diag = (
+                f"world_horizontal={world.get('horizontal_ratio',0):.3f},"
+                f"world_vertical={world.get('vertical_ratio',0):.3f},"
+                f"world_straight={world.get('straight_body_ratio',0):.3f},"
+                f"world_pushup={world.get('pushup_pose_ratio',0):.3f},"
+                f"world_verticality={world.get('median_torso_verticality')},"
+                f"world_bodyline={world.get('median_body_line_deg')}")
             reason = (
-                f"classifier={class_reason};geometry:{geometry_diag};"
+                f"classifier={class_reason};geometry:{geometry_diag};world:{world_diag};"
                 f"multi_signal:selected={metrics.get('selected_signal','none')},"
                 f"agreement={metrics.get('signal_agreement',0):.3f};"
                 f"sampled={metrics['sampled_frames']},pose={metrics['pose_frames']},"
@@ -120,6 +130,8 @@ def build_application(settings, db):
                     for c in candidates)
                 tilt = geometry.get('median_torso_tilt_deg'); bodyline = geometry.get('median_body_line_deg')
                 tilt_text = f'{tilt:.0f}°' if tilt is not None else '—'; bodyline_text = f'{bodyline:.0f}°' if bodyline is not None else '—'
+                world_v = world.get('median_torso_verticality'); world_line = world.get('median_body_line_deg')
+                world_v_text = f'{world_v:.2f}' if world_v is not None else '—'; world_line_text = f'{world_line:.0f}°' if world_line is not None else '—'
                 await update.message.reply_text(
                     '🧪 Анализ кружка\n\n'
                     f"🔎 Решение: {status_label}\n"
@@ -129,7 +141,15 @@ def build_application(settings, db):
                     f"🤝 Согласованность сигналов: {metrics.get('signal_agreement', 0):.0%}\n"
                     f"🎯 Выбранный сигнал: {metrics.get('selected_signal', 'none')}\n"
                     f"🎞 Кадры: {metrics['usable_frames']}/{metrics['sampled_frames']} пригодны\n\n"
-                    f"📐 Геометрия:\n"
+                    f"🌐 3D-геометрия:\n"
+                    f"• world-кадры: {world.get('world_frames',0)}/{world.get('sampled_frames',0)}\n"
+                    f"• горизонтально: {world.get('horizontal_ratio',0):.0%}\n"
+                    f"• вертикально: {world.get('vertical_ratio',0):.0%}\n"
+                    f"• прямой корпус: {world.get('straight_body_ratio',0):.0%}\n"
+                    f"• push-up поза: {world.get('pushup_pose_ratio',0):.0%}\n"
+                    f"• verticality: {world_v_text}\n"
+                    f"• линия тела: {world_line_text}\n\n"
+                    f"📐 2D (только диагностика):\n"
                     f"• горизонтально: {geometry.get('horizontal_ratio',0):.0%}\n"
                     f"• вертикально: {geometry.get('vertical_ratio',0):.0%}\n"
                     f"• прямой корпус: {geometry.get('straight_body_ratio',0):.0%}\n"
@@ -139,8 +159,8 @@ def build_application(settings, db):
                     f"Сигналы:\n{signal_lines}"
                 )
 
-            logger.info('Push-up classification chat_id=%s message_id=%s status=%s reason=%s count=%s geometry=%s selected=%s agreement=%.3f signals=%s',
-                        chat_id, message_id, status, class_reason, metrics['pushup_count'], geometry_diag,
+            logger.info('Push-up classification chat_id=%s message_id=%s status=%s reason=%s count=%s geometry=%s world=%s selected=%s agreement=%.3f signals=%s',
+                        chat_id, message_id, status, class_reason, metrics['pushup_count'], geometry_diag, world_diag,
                         metrics.get('selected_signal'), metrics.get('signal_agreement', 0), signal_diag)
         except Exception as exc:
             if attempt:
