@@ -8,6 +8,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.pose_analysis import analyze_pose_visibility
+from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
 from app.summaries import format_summary, today_moscow
 
@@ -81,30 +82,37 @@ def build_application(settings, db):
                 raise ValueError('Downloaded video note is empty')
 
             metrics = await asyncio.to_thread(analyze_pose_visibility, temp_path)
+            classification = classify_pushup_attempt(metrics)
+            status = classification['status']; class_reason = classification['reason']
             confidence = round(metrics['usable_ratio'], 4)
             candidates = metrics.get('candidates', [])
             signal_diag = ';'.join(
                 f"{c['name']}={c['count']}/{c['amplitude']:.3f}/{c['quality']:.3f}"
                 for c in candidates)
             reason = (
-                f"multi_signal:selected={metrics.get('selected_signal','none')},"
+                f"classifier={class_reason};multi_signal:selected={metrics.get('selected_signal','none')},"
                 f"agreement={metrics.get('signal_agreement',0):.3f};"
                 f"sampled={metrics['sampled_frames']},pose={metrics['pose_frames']},"
                 f"usable={metrics['usable_frames']};signals:{signal_diag}")
-            await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id, 'uncertain', reason)
+            await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id, status, reason)
             await asyncio.to_thread(
                 lambda: db.client.table('pushup_attempts').update({
                     'confidence': confidence, 'pushup_count': metrics['pushup_count']})
                 .eq('chat_id', chat_id).eq('telegram_message_id', message_id).execute())
 
-            # Temporary staging feedback for calibration. Production keeps this disabled
-            # because PUSHUP_RESULTS_ENABLED remains false there.
             if settings.pushup_results_enabled:
+                status_label = {
+                    'accepted': '✅ Отжимания подтверждены',
+                    'rejected': '❌ Отжимания не обнаружены',
+                    'uncertain': '⚠️ Не удалось уверенно определить',
+                }.get(status, status)
                 signal_lines = '\n'.join(
                     f"• {c['name']}: {c['count']} (ампл. {c['amplitude']:.2f}, кач. {c['quality']:.0%})"
                     for c in candidates)
                 await update.message.reply_text(
                     '🧪 Анализ кружка\n\n'
+                    f"🔎 Решение: {status_label}\n"
+                    f"🧠 Причина: {class_reason}\n"
                     f"🏋️ Итоговый счёт: {metrics['pushup_count']}\n"
                     f"👤 Качество позы: {confidence:.0%}\n"
                     f"🤝 Согласованность сигналов: {metrics.get('signal_agreement', 0):.0%}\n"
@@ -113,8 +121,8 @@ def build_application(settings, db):
                     f"Сигналы:\n{signal_lines}"
                 )
 
-            logger.info('Multi-signal push-up count chat_id=%s message_id=%s count=%s selected=%s agreement=%.3f signals=%s',
-                        chat_id, message_id, metrics['pushup_count'], metrics.get('selected_signal'),
+            logger.info('Push-up classification chat_id=%s message_id=%s status=%s reason=%s count=%s selected=%s agreement=%.3f signals=%s',
+                        chat_id, message_id, status, class_reason, metrics['pushup_count'], metrics.get('selected_signal'),
                         metrics.get('signal_agreement', 0), signal_diag)
         except Exception as exc:
             if attempt:
