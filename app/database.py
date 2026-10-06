@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 
 class Database:
@@ -33,6 +33,24 @@ class Database:
             returning='representation')
             .execute().data)
         return bool(inserted)
+
+    def create_pushup_attempt(self, chat_id: int, user_id: int, day: date,
+                              message_id: int):
+        data = dict(chat_id=chat_id, telegram_user_id=user_id,
+                    report_date=day.isoformat(), telegram_message_id=message_id,
+                    status='processing')
+        rows = (self.client.table('pushup_attempts').upsert(
+            data, on_conflict='chat_id,telegram_message_id', ignore_duplicates=True,
+            returning='representation').execute().data)
+        return rows[0] if rows else None
+
+    def finish_pushup_attempt(self, chat_id: int, message_id: int, status: str,
+                              rejection_reason: str | None = None):
+        data = dict(status=status, rejection_reason=rejection_reason,
+                    processed_at=datetime.now(timezone.utc).isoformat())
+        return (self.client.table('pushup_attempts').update(data)
+                .eq('chat_id', chat_id).eq('telegram_message_id', message_id)
+                .execute().data)
 
     def members(self, chat_id: int) -> list[dict]:
         return (self.client.table('members').select('*').eq('chat_id', chat_id)
