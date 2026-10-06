@@ -96,6 +96,23 @@ def build_application(settings, db):
                 lambda: db.client.table('pushup_attempts').update({
                     'confidence': confidence, 'pushup_count': metrics['pushup_count']})
                 .eq('chat_id', chat_id).eq('telegram_message_id', message_id).execute())
+
+            # Temporary staging feedback for calibration. Production keeps this disabled
+            # because PUSHUP_RESULTS_ENABLED remains false there.
+            if settings.pushup_results_enabled:
+                signal_lines = '\n'.join(
+                    f"• {c['name']}: {c['count']} (ампл. {c['amplitude']:.2f}, кач. {c['quality']:.0%})"
+                    for c in candidates)
+                await update.message.reply_text(
+                    '🧪 Анализ кружка\n\n'
+                    f"🏋️ Итоговый счёт: {metrics['pushup_count']}\n"
+                    f"👤 Качество позы: {confidence:.0%}\n"
+                    f"🤝 Согласованность сигналов: {metrics.get('signal_agreement', 0):.0%}\n"
+                    f"🎯 Выбранный сигнал: {metrics.get('selected_signal', 'none')}\n"
+                    f"🎞 Кадры: {metrics['usable_frames']}/{metrics['sampled_frames']} пригодны\n\n"
+                    f"Сигналы:\n{signal_lines}"
+                )
+
             logger.info('Multi-signal push-up count chat_id=%s message_id=%s count=%s selected=%s agreement=%.3f signals=%s',
                         chat_id, message_id, metrics['pushup_count'], metrics.get('selected_signal'),
                         metrics.get('signal_agreement', 0), signal_diag)
