@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import tempfile
 from contextvars import ContextVar
 
 from telegram import Update
@@ -74,6 +76,49 @@ def build_application(settings, db):
         else:
             await update.message.reply_text(str(update.effective_chat.id))
 
+    async def inspect_video_note(update, context, user_id, day):
+        chat_id = update.effective_chat.id
+        message_id = update.message.message_id
+        attempt = None
+        temp_path = None
+        try:
+            attempt = await asyncio.to_thread(
+                db.create_pushup_attempt, chat_id, user_id, day, message_id)
+            # Duplicate delivery: the original attempt already owns this Telegram message.
+            if not attempt:
+                return
+
+            telegram_file = await context.bot.get_file(update.message.video_note.file_id)
+            with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4',
+                                             delete=False) as temp_file:
+                temp_path = temp_file.name
+            await telegram_file.download_to_drive(custom_path=temp_path)
+
+            if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
+                raise ValueError('Downloaded video note is empty')
+
+            # Transport-only milestone. Pose analysis will replace this status later.
+            await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id,
+                                    'uncertain', 'transport_check_passed')
+            logger.info('Push-up transport check passed chat_id=%s message_id=%s',
+                        chat_id, message_id)
+        except Exception as exc:
+            if attempt:
+                try:
+                    await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id,
+                                            'failed', 'transport_error')
+                except Exception as db_exc:
+                    log_exception(logger, 'Push-up attempt failure update failed', db_exc, settings)
+            log_exception(logger, 'Push-up transport check failed', exc, settings)
+        finally:
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    log_exception(logger, 'Temporary video cleanup failed', exc, settings)
+
     async def video_note(update, context):
         user = update.effective_user
         if not user or user.is_bot or update.message.sender_chat:
@@ -83,7 +128,12 @@ def build_application(settings, db):
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member['active']:
             return
+
+        # The legacy MVP write is intentionally first and independent from analysis.
         await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
+
+        if settings.pushup_analysis_enabled:
+            await inspect_video_note(update, context, user.id, day)
 
     async def error_handler(update, context):
         update_failed.set(True)
