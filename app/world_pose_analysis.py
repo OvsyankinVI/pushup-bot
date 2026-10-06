@@ -11,17 +11,32 @@ def _midpoint(a,b): return ((a.x+b.x)/2,(a.y+b.y)/2,(a.z+b.z)/2)
 def _vector(a,b): return (b[0]-a[0],b[1]-a[1],b[2]-a[2])
 def _norm(v): return math.sqrt(sum(x*x for x in v))
 def _angle3(a,b,c):
-    ba=(a.x-b.x,a.y-b.y,a.z-b.z); bc=(c.x-b.x,c.y-b.y,c.z-b.z); d=_norm(ba)*_norm(bc)
+    ba=(a.x-b.x,a.y-b.y,a.z-b.z);bc=(c.x-b.x,c.y-b.y,c.z-b.z);d=_norm(ba)*_norm(bc)
     if d<=1e-8:return None
     return math.degrees(math.acos(max(-1.0,min(1.0,sum(x*y for x,y in zip(ba,bc))/d))))
 def _median(values):
-    values=[v for v in values if v is not None]; return statistics.median(values) if values else None
+    values=[v for v in values if v is not None];return statistics.median(values) if values else None
 def _percentile(values,q):
     values=sorted(v for v in values if v is not None)
     if not values:return None
     pos=(len(values)-1)*q;lo=int(math.floor(pos));hi=int(math.ceil(pos))
     if lo==hi:return values[lo]
     return values[lo]+(values[hi]-values[lo])*(pos-lo)
+def _pearson(xs,ys):
+    pairs=[(x,y) for x,y in zip(xs,ys) if x is not None and y is not None]
+    if len(pairs)<6:return None
+    ax=sum(x for x,_ in pairs)/len(pairs);ay=sum(y for _,y in pairs)/len(pairs);dx=[x-ax for x,_ in pairs];dy=[y-ay for _,y in pairs];den=math.sqrt(sum(x*x for x in dx)*sum(y*y for y in dy))
+    if den<=1e-8:return None
+    return sum(x*y for x,y in zip(dx,dy))/den
+def _motion_coupling(elbows,shoulder_heights):
+    # Correlate frame-to-frame elbow flexion with shoulder/body vertical motion.
+    # Absolute value is diagnostic because world-axis sign can flip with camera/view.
+    de=[];ds=[]
+    for i in range(1,min(len(elbows),len(shoulder_heights))):
+        if elbows[i] is None or elbows[i-1] is None or shoulder_heights[i] is None or shoulder_heights[i-1] is None:continue
+        de.append(elbows[i]-elbows[i-1]);ds.append(shoulder_heights[i]-shoulder_heights[i-1])
+    corr=_pearson(de,ds)
+    return abs(corr) if corr is not None else None,len(de)
 
 def _segments(mask,min_frames=3):
     mask=list(mask)
@@ -81,15 +96,14 @@ def analyze_world_pose(video_path:str,sample_fps:float=6.0)->dict:
                     body_angles.append(body_angle)
                     if body_angle>=145:straight+=1
                     if verticality<=.60 and body_angle>=140:pushup_like+=1
-                timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle})
+                timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle,'shoulder_y':shoulder[1]})
     finally:capture.release()
-    pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)))
-    min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));segment_details=[];gated_count=gated_frames=counted_segments=0
+    pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)));min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));segment_details=[];gated_count=gated_frames=counted_segments=0
     for start,end in segments:
-        rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows]
-        count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90)
+        rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows];shoulders=[r['shoulder_y'] for r in rows]
+        count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90);coupling,coupling_samples=_motion_coupling(elbows,shoulders)
         gated_frames+=frames
         if counted:gated_count+=count;counted_segments+=1
-        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None})
+        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None,'motion_coupling':round(coupling,3) if coupling is not None else None,'coupling_samples':coupling_samples})
     denominator=world_frames or 1
     return {'sampled_frames':sampled,'world_frames':world_frames,'world_pose_ratio':world_frames/sampled if sampled else 0.0,'horizontal_ratio':horizontal/denominator,'vertical_ratio':vertical/denominator,'straight_body_ratio':straight/denominator,'pushup_pose_ratio':pushup_like/denominator,'median_torso_verticality':_median(torso_verticalities),'median_body_line_deg':_median(body_angles),'gated_frames':gated_frames,'gated_ratio':gated_frames/sampled if sampled else 0.0,'gated_segments':len(segments),'counted_segments':counted_segments,'gated_pushup_count':gated_count,'segment_details':segment_details,'actual_sample_fps':actual_fps,'min_counted_segment_s':min_counted_duration_s}
