@@ -52,6 +52,12 @@ class Database:
                 .eq('chat_id', chat_id).eq('telegram_message_id', message_id)
                 .execute().data)
 
+    def daily_pushup_total(self, chat_id: int, user_id: int, day: date) -> int:
+        rows=(self.client.table('pushup_attempts').select('pushup_count')
+              .eq('chat_id',chat_id).eq('telegram_user_id',user_id)
+              .eq('report_date',day.isoformat()).eq('status','accepted').execute().data)
+        return sum(int(row.get('pushup_count') or 0) for row in rows)
+
     def members(self, chat_id: int) -> list[dict]:
         return (self.client.table('members').select('*').eq('chat_id', chat_id)
                 .eq('active', True).order('display_name').execute().data)
