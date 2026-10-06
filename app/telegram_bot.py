@@ -87,30 +87,28 @@ def build_application(settings, db):
                 db.create_pushup_attempt, chat_id, user_id, day, message_id)
             if not attempt:
                 return
-
             telegram_file = await context.bot.get_file(update.message.video_note.file_id)
-            with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4',
-                                             delete=False) as temp_file:
-                temp_path = temp_file.name
+            with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4', delete=False) as f:
+                temp_path = f.name
             await telegram_file.download_to_drive(custom_path=temp_path)
             if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
                 raise ValueError('Downloaded video note is empty')
 
             metrics = await asyncio.to_thread(analyze_pose_visibility, temp_path)
             confidence = round(metrics['usable_ratio'], 4)
-            reason = ('pose_visibility:'
-                      f"sampled={metrics['sampled_frames']},"
-                      f"pose={metrics['pose_frames']},"
-                      f"usable={metrics['usable_frames']},"
-                      f"mean={metrics['mean_visibility']:.3f}")
+            reason = ('experimental_count:'
+                      f"sampled={metrics['sampled_frames']},pose={metrics['pose_frames']},"
+                      f"usable={metrics['usable_frames']},motion={metrics['motion_amplitude']:.3f},"
+                      f"elbow_range={metrics['elbow_angle_range']:.1f}")
+            # Still uncertain: the first counter needs calibration against human ground truth.
             await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id,
                                     'uncertain', reason)
-            # Store the diagnostic score without changing user-facing behaviour.
             await asyncio.to_thread(
-                lambda: db.client.table('pushup_attempts').update({'confidence': confidence})
+                lambda: db.client.table('pushup_attempts').update({
+                    'confidence': confidence, 'pushup_count': metrics['pushup_count']})
                 .eq('chat_id', chat_id).eq('telegram_message_id', message_id).execute())
-            logger.info('Pose visibility check chat_id=%s message_id=%s usable_ratio=%.3f',
-                        chat_id, message_id, metrics['usable_ratio'])
+            logger.info('Experimental push-up count chat_id=%s message_id=%s count=%s usable=%.3f',
+                        chat_id, message_id, metrics['pushup_count'], metrics['usable_ratio'])
         except Exception as exc:
             if attempt:
                 try:
@@ -136,8 +134,6 @@ def build_application(settings, db):
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member['active']:
             return
-
-        # Legacy MVP write stays first and independent from all CV work.
         await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
         if settings.pushup_analysis_enabled:
             await inspect_video_note(update, context, user.id, day)
