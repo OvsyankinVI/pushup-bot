@@ -102,7 +102,6 @@ def _count_cycles(values,fps,min_amplitude):
 
 
 def _count_local_cycles(values,fps,min_amplitude):
-    """Dominant-side peak/trough detector. One complete A-B-A sequence is one repetition."""
     smooth=_smooth(values,radius=1);valid=[v for v in smooth if v is not None]
     if len(valid)<max(8,int(fps*2)):return 0,0.0,0.0
     ordered=sorted(valid);global_amp=ordered[int((len(ordered)-1)*.90)]-ordered[int((len(ordered)-1)*.10)]
@@ -128,10 +127,6 @@ def _count_local_cycles(values,fps,min_amplitude):
         elif e[1]==strong[-1][1]:
             better=(e[1]=='high' and e[2]>strong[-1][2]) or (e[1]=='low' and e[2]<strong[-1][2])
             if better:strong[-1]=e
-    # The previous implementation counted every overlapping A-B-A window, so
-    # high-low-high-low-high produced 3 counts instead of 2 full repetitions.
-    # A complete repetition consumes two phase transitions; count non-overlapping
-    # pairs of transitions regardless of whether the clip starts at high or low.
     transitions=max(0,len(strong)-1);count=transitions//2
     coverage=len(valid)/len(values);quality=coverage*min(1.0,transitions/max(2,count*2)) if count else 0.0
     return count,global_amp,quality
@@ -163,6 +158,8 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
     source_fps=capture.get(cv2.CAP_PROP_FPS) or 25.0;every_n=max(1,round(source_fps/sample_fps));actual_fps=source_fps/every_n
     total=sampled=pose_frames=usable=0;visibility_sum=supporting_sum=0.0;left_score=right_score=0.0;left_frames=right_frames=0
+    geometry_frames=horizontal_frames=vertical_frames=straight_frames=pushup_like_frames=0
+    torso_tilts=[];body_line_angles=[]
     signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle')}
     options=mp.tasks.vision.PoseLandmarkerOptions(base_options=mp.tasks.BaseOptions(model_asset_path=model),running_mode=mp.tasks.vision.RunningMode.VIDEO,num_poses=1,min_pose_detection_confidence=.45,min_pose_presence_confidence=.45,min_tracking_confidence=.45)
     try:
@@ -187,10 +184,27 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
                 if lok:parts.append(_distance(lm[11],lm[23]))
                 if rok:parts.append(_distance(lm[12],lm[24]))
                 torso=max(sum(parts)/len(parts),.05)
-                if lok and rok:sy=(lm[11].y+lm[12].y)/2;hy=(lm[23].y+lm[24].y)/2
-                else:s,h=(11,23) if lok else (12,24);sy=lm[s].y;hy=lm[h].y
+                if lok and rok:sy=(lm[11].y+lm[12].y)/2;hy=(lm[23].y+lm[24].y)/2;sx=(lm[11].x+lm[12].x)/2;hx=(lm[23].x+lm[24].x)/2
+                else:s,h=(11,23) if lok else (12,24);sy=lm[s].y;hy=lm[h].y;sx=lm[s].x;hx=lm[h].x
                 signals['body_y'].append((sy+hy)/(2*torso));signals['left_elbow_y'].append((lm[13].y-lm[11].y)/torso if lok else None);signals['right_elbow_y'].append((lm[14].y-lm[12].y)/torso if rok else None)
                 for name,s,e,w,okside in (('left_angle',11,13,15,lok),('right_angle',12,14,16,rok)):signals[name].append(_angle(lm[s],lm[e],lm[w]) if okside and min(lm[s].visibility,lm[e].visibility,lm[w].visibility)>=.25 else None)
+
+                # Geometry diagnostics: orientation is intentionally rotation-independent
+                # in image coordinates and does not require wrists/hands.
+                geometry_frames+=1
+                torso_tilt=math.degrees(math.atan2(abs(hy-sy),max(abs(hx-sx),1e-6)))
+                torso_tilts.append(torso_tilt)
+                if torso_tilt<=45:horizontal_frames+=1
+                if torso_tilt>=60:vertical_frames+=1
+                side_angles=[]
+                for shoulder,hip,ankle,okside in ((11,23,27,lok),(12,24,28,rok)):
+                    if not okside or lm[ankle].visibility<.20:continue
+                    body_angle=_angle(lm[shoulder],lm[hip],lm[ankle])
+                    if body_angle is not None:side_angles.append(body_angle)
+                if side_angles:
+                    body_line=max(side_angles);body_line_angles.append(body_line)
+                    if body_line>=145:straight_frames+=1
+                    if torso_tilt<=50 and body_line>=140:pushup_like_frames+=1
     finally:capture.release()
     if sampled==0:raise ValueError('Video contains no readable sampled frames')
     lavg=left_score/left_frames if left_frames else 0;ravg=right_score/right_frames if right_frames else 0;lcov=left_frames/sampled;rcov=right_frames/sampled;dominant_side=None
@@ -202,4 +216,13 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
         else:count,amp,quality=_count_cycles(_smooth(values),actual_fps,thresholds[name])
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
     count,selected,agreement=_choose_consensus(candidates,dominant_side)
-    return {'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps}
+    geometry={
+        'frames':geometry_frames,
+        'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
+        'vertical_ratio':vertical_frames/geometry_frames if geometry_frames else 0.0,
+        'straight_body_ratio':straight_frames/geometry_frames if geometry_frames else 0.0,
+        'pushup_pose_ratio':pushup_like_frames/geometry_frames if geometry_frames else 0.0,
+        'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
+        'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
+    }
+    return {'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}

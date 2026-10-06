@@ -86,11 +86,20 @@ def build_application(settings, db):
             status = classification['status']; class_reason = classification['reason']
             confidence = round(metrics['usable_ratio'], 4)
             candidates = metrics.get('candidates', [])
+            geometry = metrics.get('geometry', {})
             signal_diag = ';'.join(
                 f"{c['name']}={c['count']}/{c['amplitude']:.3f}/{c['quality']:.3f}"
                 for c in candidates)
+            geometry_diag = (
+                f"horizontal={geometry.get('horizontal_ratio',0):.3f},"
+                f"vertical={geometry.get('vertical_ratio',0):.3f},"
+                f"straight={geometry.get('straight_body_ratio',0):.3f},"
+                f"pushup_pose={geometry.get('pushup_pose_ratio',0):.3f},"
+                f"tilt={geometry.get('median_torso_tilt_deg')},"
+                f"bodyline={geometry.get('median_body_line_deg')}")
             reason = (
-                f"classifier={class_reason};multi_signal:selected={metrics.get('selected_signal','none')},"
+                f"classifier={class_reason};geometry:{geometry_diag};"
+                f"multi_signal:selected={metrics.get('selected_signal','none')},"
                 f"agreement={metrics.get('signal_agreement',0):.3f};"
                 f"sampled={metrics['sampled_frames']},pose={metrics['pose_frames']},"
                 f"usable={metrics['usable_frames']};signals:{signal_diag}")
@@ -109,6 +118,8 @@ def build_application(settings, db):
                 signal_lines = '\n'.join(
                     f"• {c['name']}: {c['count']} (ампл. {c['amplitude']:.2f}, кач. {c['quality']:.0%})"
                     for c in candidates)
+                tilt = geometry.get('median_torso_tilt_deg'); bodyline = geometry.get('median_body_line_deg')
+                tilt_text = f'{tilt:.0f}°' if tilt is not None else '—'; bodyline_text = f'{bodyline:.0f}°' if bodyline is not None else '—'
                 await update.message.reply_text(
                     '🧪 Анализ кружка\n\n'
                     f"🔎 Решение: {status_label}\n"
@@ -118,12 +129,19 @@ def build_application(settings, db):
                     f"🤝 Согласованность сигналов: {metrics.get('signal_agreement', 0):.0%}\n"
                     f"🎯 Выбранный сигнал: {metrics.get('selected_signal', 'none')}\n"
                     f"🎞 Кадры: {metrics['usable_frames']}/{metrics['sampled_frames']} пригодны\n\n"
+                    f"📐 Геометрия:\n"
+                    f"• горизонтально: {geometry.get('horizontal_ratio',0):.0%}\n"
+                    f"• вертикально: {geometry.get('vertical_ratio',0):.0%}\n"
+                    f"• прямой корпус: {geometry.get('straight_body_ratio',0):.0%}\n"
+                    f"• push-up поза: {geometry.get('pushup_pose_ratio',0):.0%}\n"
+                    f"• наклон торса: {tilt_text}\n"
+                    f"• линия тела: {bodyline_text}\n\n"
                     f"Сигналы:\n{signal_lines}"
                 )
 
-            logger.info('Push-up classification chat_id=%s message_id=%s status=%s reason=%s count=%s selected=%s agreement=%.3f signals=%s',
-                        chat_id, message_id, status, class_reason, metrics['pushup_count'], metrics.get('selected_signal'),
-                        metrics.get('signal_agreement', 0), signal_diag)
+            logger.info('Push-up classification chat_id=%s message_id=%s status=%s reason=%s count=%s geometry=%s selected=%s agreement=%.3f signals=%s',
+                        chat_id, message_id, status, class_reason, metrics['pushup_count'], geometry_diag,
+                        metrics.get('selected_signal'), metrics.get('signal_agreement', 0), signal_diag)
         except Exception as exc:
             if attempt:
                 try:
