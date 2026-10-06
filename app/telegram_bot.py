@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+from app.pose_analysis import analyze_pose_visibility
 from app.safe_logging import log_exception
 from app.summaries import format_summary, today_moscow
 
@@ -84,7 +85,6 @@ def build_application(settings, db):
         try:
             attempt = await asyncio.to_thread(
                 db.create_pushup_attempt, chat_id, user_id, day, message_id)
-            # Duplicate delivery: the original attempt already owns this Telegram message.
             if not attempt:
                 return
 
@@ -93,23 +93,32 @@ def build_application(settings, db):
                                              delete=False) as temp_file:
                 temp_path = temp_file.name
             await telegram_file.download_to_drive(custom_path=temp_path)
-
             if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
                 raise ValueError('Downloaded video note is empty')
 
-            # Transport-only milestone. Pose analysis will replace this status later.
+            metrics = await asyncio.to_thread(analyze_pose_visibility, temp_path)
+            confidence = round(metrics['usable_ratio'], 4)
+            reason = ('pose_visibility:'
+                      f"sampled={metrics['sampled_frames']},"
+                      f"pose={metrics['pose_frames']},"
+                      f"usable={metrics['usable_frames']},"
+                      f"mean={metrics['mean_visibility']:.3f}")
             await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id,
-                                    'uncertain', 'transport_check_passed')
-            logger.info('Push-up transport check passed chat_id=%s message_id=%s',
-                        chat_id, message_id)
+                                    'uncertain', reason)
+            # Store the diagnostic score without changing user-facing behaviour.
+            await asyncio.to_thread(
+                lambda: db.client.table('pushup_attempts').update({'confidence': confidence})
+                .eq('chat_id', chat_id).eq('telegram_message_id', message_id).execute())
+            logger.info('Pose visibility check chat_id=%s message_id=%s usable_ratio=%.3f',
+                        chat_id, message_id, metrics['usable_ratio'])
         except Exception as exc:
             if attempt:
                 try:
                     await asyncio.to_thread(db.finish_pushup_attempt, chat_id, message_id,
-                                            'failed', 'transport_error')
+                                            'failed', 'pose_analysis_error')
                 except Exception as db_exc:
                     log_exception(logger, 'Push-up attempt failure update failed', db_exc, settings)
-            log_exception(logger, 'Push-up transport check failed', exc, settings)
+            log_exception(logger, 'Push-up pose analysis failed', exc, settings)
         finally:
             if temp_path:
                 try:
@@ -123,15 +132,13 @@ def build_application(settings, db):
         user = update.effective_user
         if not user or user.is_bot or update.message.sender_chat:
             return
-        # Capture processing date before any I/O; server timezone is irrelevant.
         day = today_moscow()
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member['active']:
             return
 
-        # The legacy MVP write is intentionally first and independent from analysis.
+        # Legacy MVP write stays first and independent from all CV work.
         await asyncio.to_thread(db.record, update.effective_chat.id, user.id, day)
-
         if settings.pushup_analysis_enabled:
             await inspect_video_note(update, context, user.id, day)
 
