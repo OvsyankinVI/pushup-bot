@@ -16,12 +16,18 @@ def _angle3(a,b,c):
     return math.degrees(math.acos(max(-1.0,min(1.0,sum(x*y for x,y in zip(ba,bc))/d))))
 def _median(values):
     values=[v for v in values if v is not None]; return statistics.median(values) if values else None
+def _percentile(values,q):
+    values=sorted(v for v in values if v is not None)
+    if not values:return None
+    pos=(len(values)-1)*q;lo=int(math.floor(pos));hi=int(math.ceil(pos))
+    if lo==hi:return values[lo]
+    return values[lo]+(values[hi]-values[lo])*(pos-lo)
 
 def _segments(mask,min_frames=3):
     mask=list(mask)
     for i in range(1,len(mask)-1):
-        if not mask[i] and mask[i-1] and mask[i+1]: mask[i]=True
-    result=[]; start=None
+        if not mask[i] and mask[i-1] and mask[i+1]:mask[i]=True
+    result=[];start=None
     for i,value in enumerate(mask+[False]):
         if value and start is None:start=i
         elif not value and start is not None:
@@ -32,9 +38,9 @@ def _segments(mask,min_frames=3):
 def _count_elbow_cycles(values,min_range=35.0):
     valid=[v for v in values if v is not None]
     if len(valid)<5:return 0,0.0
-    ordered=sorted(valid); lo=ordered[int((len(ordered)-1)*.15)]; hi=ordered[int((len(ordered)-1)*.85)]; amplitude=hi-lo
+    ordered=sorted(valid);lo=ordered[int((len(ordered)-1)*.15)];hi=ordered[int((len(ordered)-1)*.85)];amplitude=hi-lo
     if amplitude<min_range:return 0,amplitude
-    low=lo+amplitude*.30; high=lo+amplitude*.70; state=None; transitions=0
+    low=lo+amplitude*.30;high=lo+amplitude*.70;state=None;transitions=0
     for value in values:
         if value is None:continue
         if state is None:
@@ -78,15 +84,12 @@ def analyze_world_pose(video_path:str,sample_fps:float=6.0)->dict:
                 timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle})
     finally:capture.release()
     pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)))
-    # A setup/transition segment can briefly look horizontal and contain one arm cycle.
-    # Count only segments long enough to represent sustained exercise. Keep them in
-    # diagnostics with counted=False so calibration remains visible.
-    min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s))
-    segment_details=[];gated_count=gated_frames=counted_segments=0
+    min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));segment_details=[];gated_count=gated_frames=counted_segments=0
     for start,end in segments:
-        elbows=[timeline[i]['elbow'] if timeline[i] else None for i in range(start,end)];count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames
+        rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows]
+        count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90)
         gated_frames+=frames
         if counted:gated_count+=count;counted_segments+=1
-        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1)})
+        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None})
     denominator=world_frames or 1
     return {'sampled_frames':sampled,'world_frames':world_frames,'world_pose_ratio':world_frames/sampled if sampled else 0.0,'horizontal_ratio':horizontal/denominator,'vertical_ratio':vertical/denominator,'straight_body_ratio':straight/denominator,'pushup_pose_ratio':pushup_like/denominator,'median_torso_verticality':_median(torso_verticalities),'median_body_line_deg':_median(body_angles),'gated_frames':gated_frames,'gated_ratio':gated_frames/sampled if sampled else 0.0,'gated_segments':len(segments),'counted_segments':counted_segments,'gated_pushup_count':gated_count,'segment_details':segment_details,'actual_sample_fps':actual_fps,'min_counted_segment_s':min_counted_duration_s}
