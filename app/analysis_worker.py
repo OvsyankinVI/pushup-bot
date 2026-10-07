@@ -64,7 +64,7 @@ async def process_attempt(application, settings, db, attempt):
                     attempt_id,status,count,world.get('gated_pushup_count',0))
     except Exception as exc:
         try:
-            await asyncio.to_thread(db.fail_pushup_attempt, attempt_id, type(exc).__name__)
+            await asyncio.to_thread(db.retry_or_fail_pushup_attempt, attempt_id, type(exc).__name__)
         except Exception as db_exc:
             log_exception(logger,'Push-up queue failure update failed',db_exc,settings)
         log_exception(logger,'Push-up queue processing failed',exc,settings)
