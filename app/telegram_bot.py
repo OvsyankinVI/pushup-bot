@@ -35,7 +35,21 @@ def build_application(settings,db):
         rows=await asyncio.to_thread(db.members,update.effective_chat.id);text=('👥 Участники:\n\n'+'\n'.join(f"• {m['display_name']}" for m in rows)+f'\n\nВсего: {len(rows)}') if rows else 'Участников пока нет. Используйте /join.';await update.message.reply_text(text)
     async def today(update,context):
         if not await group_only(update):return
-        day=today_moscow();rows,reported=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day))
+        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals))
+    async def results_on(update,context):
+        if not await group_only(update):return
+        if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
+            await update.message.reply_text('Команда доступна только администратору бота.');return
+        await asyncio.to_thread(db.set_result_replies_enabled,update.effective_chat.id,True)
+        await update.message.reply_text('🔔 Ответы на кружки включены.')
+
+    async def results_off(update,context):
+        if not await group_only(update):return
+        if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
+            await update.message.reply_text('Команда доступна только администратору бота.');return
+        await asyncio.to_thread(db.set_result_replies_enabled,update.effective_chat.id,False)
+        await update.message.reply_text('🔕 Ответы на кружки выключены. Отжимания продолжают считаться.')
+
     async def chatid(update,context):
         if not await group_only(update):return
         if settings.admin_telegram_id is None:await update.message.reply_text('Администратор не настроен: ADMIN_TELEGRAM_ID.')
@@ -64,5 +78,5 @@ def build_application(settings,db):
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
-    for command,callback in [('start',start),('join',join),('members',members),('today',today),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    for command,callback in [('start',start),('join',join),('members',members),('today',today),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE,video_note));application.add_error_handler(error_handler);return application
