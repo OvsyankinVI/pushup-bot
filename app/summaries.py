@@ -32,8 +32,7 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
         done = member['telegram_user_id'] in reported
         count += done
         total = pushup_totals.get(member['telegram_user_id'], 0)
-        lines.append(f"{'✅' if done else '❌'} {member['display_name']} — "
-                     f"{total} отж. ({'кружок есть' if done else 'кружка нет'})")
+        lines.append(f"{'✅' if done else '❌'} {member['display_name']} — {total} отж.")
     lines.extend(['', f'Отчитались: {count}/{len(members)}',
                   f'🏋️ Всего отжиманий: {sum(pushup_totals.values())}'])
     if kind != 'today':
