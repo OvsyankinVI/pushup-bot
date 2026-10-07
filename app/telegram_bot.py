@@ -44,6 +44,17 @@ def build_application(settings,db):
     async def video_note(update,context):
         user=update.effective_user
         if not user or user.is_bot or update.message.sender_chat:return
+        # Only original video notes sent in this group are eligible.
+        # Telegram exposes both modern and legacy forwarding metadata depending
+        # on Bot API / python-telegram-bot versions.
+        if (getattr(update.message,'forward_origin',None) is not None
+                or getattr(update.message,'forward_date',None) is not None
+                or getattr(update.message,'forward_from',None) is not None
+                or getattr(update.message,'forward_from_chat',None) is not None):
+            if settings.pushup_results_enabled:
+                await update.message.reply_text(
+                    '↪️ Пересланный кружок не засчитывается. Отправьте новый кружок прямо в эту группу.')
+            return
         day=today_moscow();chat_id=update.effective_chat.id
         member=await asyncio.to_thread(db.member,chat_id,user.id)
         if not member or not member['active']:return
