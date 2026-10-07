@@ -58,11 +58,26 @@ class Database:
         rows = self.client.rpc('claim_next_pushup_attempt').execute().data
         return rows[0] if rows else None
 
-    def fail_pushup_attempt(self, attempt_id: int, error: str):
-        return (self.client.table('pushup_attempts').update({
-                    'last_error': error[:1000],
-                    'processing_started_at': None,
-                }).eq('id', attempt_id).eq('status', 'processing').execute().data)
+    def retry_or_fail_pushup_attempt(self, attempt_id: int, error: str,
+                                     max_attempts: int = 3):
+        rows = (self.client.table('pushup_attempts')
+                .select('attempt_count,status').eq('id', attempt_id)
+                .limit(1).execute().data)
+        if not rows or rows[0]['status'] != 'processing':
+            return []
+        exhausted = int(rows[0].get('attempt_count') or 0) >= max_attempts
+        data = {
+            'last_error': error[:1000],
+            'processing_started_at': None,
+        }
+        if exhausted:
+            data.update({
+                'status': 'failed',
+                'rejection_reason': 'retry_limit_exceeded',
+                'processed_at': datetime.now(timezone.utc).isoformat(),
+            })
+        return (self.client.table('pushup_attempts').update(data)
+                .eq('id', attempt_id).eq('status', 'processing').execute().data)
 
     def finish_pushup_attempt(self, chat_id: int, message_id: int, status: str,
                               rejection_reason: str | None = None):
