@@ -101,14 +101,14 @@ async def send_summary(request, secret, kind):
         raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
     day = midnight_report_date() if kind == 'midnight' else today_moscow()
     try:
-        members, reported = await asyncio.to_thread(
+        members, reported, totals = await asyncio.to_thread(
             request.app.state.db.summary_data, settings.telegram_chat_id, day)
         if kind == 'midnight' and all(
                 member['telegram_user_id'] in reported for member in members):
             return {'status': 'ok', 'report_date': day.isoformat()}
         await request.app.state.telegram.bot.send_message(
             chat_id=settings.telegram_chat_id,
-            text=format_summary(members, reported, day, kind))
+            text=format_summary(members, reported, day, kind, totals))
     except Exception as exc:
         log_exception(logger, 'Summary failed', exc, settings)
         raise HTTPException(503, 'Summary delivery failed') from None
