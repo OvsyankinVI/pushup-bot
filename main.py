@@ -7,6 +7,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from supabase import create_client
 from telegram import Update
 
+from app.admin_alerts import send_admin_alert
+from app.analysis_worker import worker_loop
 from app.config import Settings
 from app.database import Database
 from app.safe_logging import log_exception
@@ -31,9 +33,18 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
+            worker_task = None
+            if settings.pushup_analysis_enabled:
+                worker_task = asyncio.create_task(worker_loop(telegram, settings, db))
             try:
                 yield
             finally:
+                if worker_task:
+                    worker_task.cancel()
+                    try:
+                        await worker_task
+                    except asyncio.CancelledError:
+                        pass
                 await telegram.stop()
     except Exception as exc:
         log_exception(logger, 'Application lifecycle failed', exc, settings)
@@ -91,16 +102,22 @@ async def send_summary(request, secret, kind):
         raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
     day = midnight_report_date() if kind == 'midnight' else today_moscow()
     try:
-        members, reported = await asyncio.to_thread(
+        members, reported, totals = await asyncio.to_thread(
             request.app.state.db.summary_data, settings.telegram_chat_id, day)
         if kind == 'midnight' and all(
                 member['telegram_user_id'] in reported for member in members):
             return {'status': 'ok', 'report_date': day.isoformat()}
         await request.app.state.telegram.bot.send_message(
             chat_id=settings.telegram_chat_id,
-            text=format_summary(members, reported, day, kind))
+            text=format_summary(members, reported, day, kind, totals))
     except Exception as exc:
         log_exception(logger, 'Summary failed', exc, settings)
+        label = 'вечерней сводки (21:00)' if kind == 'evening' else 'ночной сводки (00:00)'
+        await send_admin_alert(
+            request.app.state.telegram, settings,
+            f"🚨 Ошибка {label}\n"
+            f"📅 Дата отчёта: {day.isoformat()}\n"
+            f"❌ Ошибка: {type(exc).__name__}")
         raise HTTPException(503, 'Summary delivery failed') from None
     return {'status': 'ok', 'report_date': day.isoformat()}
 

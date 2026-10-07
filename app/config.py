@@ -14,6 +14,8 @@ class Settings:
     telegram_webhook_secret: str = field(default='', repr=False)
     admin_telegram_id: int | None = None
     telegram_chat_id: int | None = None
+    pushup_analysis_enabled: bool = False
+    pushup_results_enabled: bool = False
 
     @classmethod
     def from_env(cls):
@@ -34,6 +36,16 @@ class Settings:
             except ValueError:
                 raise ValueError(f'{name} должна быть целым числом') from None
 
+        def optional_bool(name, default=False):
+            value = os.getenv(name, '').strip().lower()
+            if not value:
+                return default
+            if value in ('1', 'true', 'yes', 'on'):
+                return True
+            if value in ('0', 'false', 'no', 'off'):
+                return False
+            raise ValueError(f'{name} должна быть true или false')
+
         secret = os.getenv('TELEGRAM_WEBHOOK_SECRET', '').strip()
         if secret and not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', secret):
             raise ValueError('Некорректный формат TELEGRAM_WEBHOOK_SECRET')
@@ -45,4 +57,6 @@ class Settings:
             telegram_webhook_secret=secret,
             admin_telegram_id=optional_id('ADMIN_TELEGRAM_ID'),
             telegram_chat_id=optional_id('TELEGRAM_CHAT_ID'),
+            pushup_analysis_enabled=optional_bool('PUSHUP_ANALYSIS_ENABLED'),
+            pushup_results_enabled=optional_bool('PUSHUP_RESULTS_ENABLED'),
         )
