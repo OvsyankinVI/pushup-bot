@@ -4,6 +4,7 @@ import os
 import tempfile
 from datetime import date, datetime, timezone
 
+from app.admin_alerts import send_admin_alert
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
@@ -65,7 +66,18 @@ async def process_attempt(application, settings, db, attempt):
                     attempt_id,status,count,world.get('gated_pushup_count',0))
     except Exception as exc:
         try:
-            await asyncio.to_thread(db.retry_or_fail_pushup_attempt, attempt_id, type(exc).__name__)
+            rows = await asyncio.to_thread(
+                db.retry_or_fail_pushup_attempt, attempt_id, type(exc).__name__)
+            if rows and rows[0].get('status') == 'failed':
+                member = await asyncio.to_thread(db.member, chat_id, user_id)
+                name = (member or {}).get('display_name') or str(user_id)
+                await send_admin_alert(
+                    application, settings,
+                    "🚨 Не удалось обработать кружок после 3 попыток\n"
+                    f"👤 {name}\n"
+                    f"💬 Chat ID: {chat_id}\n"
+                    f"🆔 Message ID: {message_id}\n"
+                    f"❌ Ошибка: {type(exc).__name__}")
         except Exception as db_exc:
             log_exception(logger,'Push-up queue failure update failed',db_exc,settings)
         log_exception(logger,'Push-up queue processing failed',exc,settings)
