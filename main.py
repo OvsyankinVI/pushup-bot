@@ -7,6 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from supabase import create_client
 from telegram import Update
 
+from app.analysis_worker import worker_loop
 from app.config import Settings
 from app.database import Database
 from app.safe_logging import log_exception
@@ -31,9 +32,18 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
+            worker_task = None
+            if settings.pushup_analysis_enabled:
+                worker_task = asyncio.create_task(worker_loop(telegram, settings, db))
             try:
                 yield
             finally:
+                if worker_task:
+                    worker_task.cancel()
+                    try:
+                        await worker_task
+                    except asyncio.CancelledError:
+                        pass
                 await telegram.stop()
     except Exception as exc:
         log_exception(logger, 'Application lifecycle failed', exc, settings)
