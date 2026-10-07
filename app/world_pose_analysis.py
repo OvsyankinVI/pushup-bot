@@ -69,39 +69,26 @@ def _count_elbow_cycles(values,min_range=35.0):
         elif state=='bent' and value>=high:state='straight';transitions+=1
     return transitions//2,amplitude
 
-def analyze_world_pose(video_path:str,sample_fps:float=6.0)->dict:
-    _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
-    if not capture.isOpened():raise ValueError('Video cannot be opened for world pose analysis')
-    source_fps=capture.get(cv2.CAP_PROP_FPS) or 25.0;every_n=max(1,round(source_fps/sample_fps));actual_fps=source_fps/every_n
-    sampled=world_frames=horizontal=vertical=straight=pushup_like=0;torso_verticalities=[];body_angles=[];timeline=[]
-    options=mp.tasks.vision.PoseLandmarkerOptions(base_options=mp.tasks.BaseOptions(model_asset_path=model),running_mode=mp.tasks.vision.RunningMode.VIDEO,num_poses=1,min_pose_detection_confidence=.45,min_pose_presence_confidence=.45,min_tracking_confidence=.45)
-    frame_index=0
-    try:
-        with mp.tasks.vision.PoseLandmarker.create_from_options(options) as landmarker:
-            while True:
-                ok,frame=capture.read()
-                if not ok:break
-                idx=frame_index;frame_index+=1
-                if idx%every_n:continue
-                sampled+=1;result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),int(idx*1000/source_fps))
-                if not result.pose_world_landmarks:timeline.append(None);continue
-                world_frames+=1;lm=result.pose_world_landmarks[0];shoulder=_midpoint(lm[11],lm[12]);hip=_midpoint(lm[23],lm[24]);torso=_vector(shoulder,hip);torso_len=_norm(torso)
-                if torso_len<=1e-8:timeline.append(None);continue
-                verticality=abs(torso[1])/torso_len;torso_verticalities.append(verticality)
-                if verticality<=.55:horizontal+=1
-                if verticality>=.75:vertical+=1
-                side_angles=[];elbow_angles=[]
-                for s,h,a,e,w in ((11,23,27,13,15),(12,24,28,14,16)):
-                    ba=_angle3(lm[s],lm[h],lm[a]);ea=_angle3(lm[s],lm[e],lm[w])
-                    if ba is not None:side_angles.append(ba)
-                    if ea is not None:elbow_angles.append(ea)
-                body_angle=max(side_angles) if side_angles else None;elbow_angle=_median(elbow_angles);left_knee=_angle3(lm[23],lm[25],lm[27]);right_knee=_angle3(lm[24],lm[26],lm[28]);knee_angle=_median([left_knee,right_knee]);left_leg_visibility=min(lm[23].visibility,lm[25].visibility,lm[27].visibility);right_leg_visibility=min(lm[24].visibility,lm[26].visibility,lm[28].visibility)
-                if body_angle is not None:
-                    body_angles.append(body_angle)
-                    if body_angle>=145:straight+=1
-                    if verticality<=.60 and body_angle>=140:pushup_like+=1
-                timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle,'shoulder_y':shoulder[1],'hip_y':hip[1],'knee_angle':knee_angle,'left_knee':left_knee,'right_knee':right_knee,'left_leg_visibility':left_leg_visibility,'right_leg_visibility':right_leg_visibility})
-    finally:capture.release()
+def analyze_world_landmarks(world_landmarks,actual_fps:float)->dict:
+    sampled=len(world_landmarks);world_frames=horizontal=vertical=straight=pushup_like=0;torso_verticalities=[];body_angles=[];timeline=[]
+    for lm in world_landmarks:
+        if lm is None:timeline.append(None);continue
+        world_frames+=1;shoulder=_midpoint(lm[11],lm[12]);hip=_midpoint(lm[23],lm[24]);torso=_vector(shoulder,hip);torso_len=_norm(torso)
+        if torso_len<=1e-8:timeline.append(None);continue
+        verticality=abs(torso[1])/torso_len;torso_verticalities.append(verticality)
+        if verticality<=.55:horizontal+=1
+        if verticality>=.75:vertical+=1
+        side_angles=[];elbow_angles=[]
+        for s,h,a,e,w in ((11,23,27,13,15),(12,24,28,14,16)):
+            ba=_angle3(lm[s],lm[h],lm[a]);ea=_angle3(lm[s],lm[e],lm[w])
+            if ba is not None:side_angles.append(ba)
+            if ea is not None:elbow_angles.append(ea)
+        body_angle=max(side_angles) if side_angles else None;elbow_angle=_median(elbow_angles);left_knee=_angle3(lm[23],lm[25],lm[27]);right_knee=_angle3(lm[24],lm[26],lm[28]);knee_angle=_median([left_knee,right_knee]);left_leg_visibility=min(lm[23].visibility,lm[25].visibility,lm[27].visibility);right_leg_visibility=min(lm[24].visibility,lm[26].visibility,lm[28].visibility)
+        if body_angle is not None:
+            body_angles.append(body_angle)
+            if body_angle>=145:straight+=1
+            if verticality<=.60 and body_angle>=140:pushup_like+=1
+        timeline.append({'pose':verticality<=.68,'elbow':elbow_angle,'verticality':verticality,'body_angle':body_angle,'shoulder_y':shoulder[1],'hip_y':hip[1],'knee_angle':knee_angle,'left_knee':left_knee,'right_knee':right_knee,'left_leg_visibility':left_leg_visibility,'right_leg_visibility':right_leg_visibility})
     pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)));min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));context_window_s=3.0;context_frames=max(1,int(actual_fps*context_window_s));segment_details=[];gated_count=gated_frames=counted_segments=0
     for start,end in segments:
         rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows];shoulders=[r['shoulder_y'] for r in rows];knees=[r['knee_angle'] for r in rows];left_knees=[r['left_knee'] for r in rows];right_knees=[r['right_knee'] for r in rows];hips=[r['hip_y'] for r in rows];left_leg_vis=[r['left_leg_visibility'] for r in rows];right_leg_vis=[r['right_leg_visibility'] for r in rows]
