@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from datetime import date, datetime, timezone
 
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
@@ -41,7 +42,7 @@ async def process_attempt(application, settings, db, attempt):
                 'pushup_count': count,
                 'confidence': confidence,
                 'rejection_reason': reason,
-                'processed_at': 'now()',
+                'processed_at': datetime.now(timezone.utc).isoformat(),
                 'processing_started_at': None,
                 'last_error': None,
             }).eq('id', attempt_id).execute())
@@ -49,7 +50,7 @@ async def process_attempt(application, settings, db, attempt):
         if settings.pushup_results_enabled:
             total = await asyncio.to_thread(
                 db.daily_pushup_total, chat_id, user_id,
-                __import__('datetime').date.fromisoformat(day))
+                date.fromisoformat(day))
             if status == 'accepted':
                 text = f"🏋️ Отжиманий: {count}\n🎯 Качество распознавания: {confidence:.0%}\n📊 Всего за сегодня: {total}"
             elif status == 'rejected':
