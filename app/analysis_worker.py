@@ -47,16 +47,17 @@ async def process_attempt(application, settings, db, attempt):
                 'last_error': None,
             }).eq('id', attempt_id).execute())
 
-        if settings.pushup_results_enabled:
+        replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
+        if settings.pushup_results_enabled and replies_enabled:
             total = await asyncio.to_thread(
                 db.daily_pushup_total, chat_id, user_id,
                 date.fromisoformat(day))
             if status == 'accepted':
-                text = f"🏋️ Отжиманий: {count}\n🎯 Качество распознавания: {confidence:.0%}\n📊 Всего за сегодня: {total}"
+                text = f"✅ Засчитано: {count} отж.\n📊 Всего за сегодня: {total}"
             elif status == 'rejected':
-                text = f"❌ Отжимания не засчитаны\n🎯 Качество распознавания: {confidence:.0%}\n📊 Всего за сегодня: {total}"
+                text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
-                text = f"⚠️ Не удалось уверенно распознать отжимания\n🎯 Качество распознавания: {confidence:.0%}\n📊 Всего за сегодня: {total}"
+                text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
