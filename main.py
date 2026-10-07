@@ -7,6 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from supabase import create_client
 from telegram import Update
 
+from app.admin_alerts import send_admin_alert
 from app.analysis_worker import worker_loop
 from app.config import Settings
 from app.database import Database
@@ -111,6 +112,12 @@ async def send_summary(request, secret, kind):
             text=format_summary(members, reported, day, kind, totals))
     except Exception as exc:
         log_exception(logger, 'Summary failed', exc, settings)
+        label = 'вечерней сводки (21:00)' if kind == 'evening' else 'ночной сводки (00:00)'
+        await send_admin_alert(
+            request.app.state.telegram, settings,
+            f"🚨 Ошибка {label}\n"
+            f"📅 Дата отчёта: {day.isoformat()}\n"
+            f"❌ Ошибка: {type(exc).__name__}")
         raise HTTPException(503, 'Summary delivery failed') from None
     return {'status': 'ok', 'report_date': day.isoformat()}
 
