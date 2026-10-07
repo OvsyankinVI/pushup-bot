@@ -93,6 +93,30 @@ class Database:
               .eq('report_date',day.isoformat()).eq('status','accepted').execute().data)
         return sum(int(row.get('pushup_count') or 0) for row in rows)
 
+    def pushup_totals(self, chat_id: int, day: date) -> dict[int, int]:
+        rows = (self.client.table('pushup_attempts')
+                .select('telegram_user_id,pushup_count')
+                .eq('chat_id', chat_id).eq('report_date', day.isoformat())
+                .eq('status', 'accepted').execute().data)
+        totals = {}
+        for row in rows:
+            user_id = row['telegram_user_id']
+            totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
+        return totals
+
+    def result_replies_enabled(self, chat_id: int) -> bool:
+        rows = (self.client.table('chat_settings')
+                .select('pushup_result_replies_enabled').eq('chat_id', chat_id)
+                .limit(1).execute().data)
+        return True if not rows else bool(rows[0]['pushup_result_replies_enabled'])
+
+    def set_result_replies_enabled(self, chat_id: int, enabled: bool):
+        return (self.client.table('chat_settings').upsert({
+                    'chat_id': chat_id,
+                    'pushup_result_replies_enabled': enabled,
+                    'updated_at': datetime.now(timezone.utc).isoformat(),
+                }, on_conflict='chat_id').execute().data)
+
     def members(self, chat_id: int) -> list[dict]:
         return (self.client.table('members').select('*').eq('chat_id', chat_id)
                 .eq('active', True).order('display_name').execute().data)
@@ -101,4 +125,4 @@ class Database:
         members = self.members(chat_id)
         rows = (self.client.table('daily_reports').select('telegram_user_id')
                 .eq('chat_id', chat_id).eq('report_date', day.isoformat()).execute().data)
-        return members, {row['telegram_user_id'] for row in rows}
+        return members, {row['telegram_user_id'] for row in rows}, self.pushup_totals(chat_id, day)
