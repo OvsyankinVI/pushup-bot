@@ -153,12 +153,13 @@ def _choose_consensus(candidates,dominant_side=None):
     return chosen['count'],chosen['name'],agreement
 
 
-def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
+def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
     source_fps=capture.get(cv2.CAP_PROP_FPS) or 25.0;every_n=max(1,round(source_fps/sample_fps));actual_fps=source_fps/every_n
     total=sampled=pose_frames=usable=0;visibility_sum=supporting_sum=0.0;left_score=right_score=0.0;left_frames=right_frames=0
     geometry_frames=horizontal_frames=vertical_frames=straight_frames=pushup_like_frames=0
+    world_results=[]
     torso_tilts=[];body_line_angles=[]
     signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle')}
     options=mp.tasks.vision.PoseLandmarkerOptions(base_options=mp.tasks.BaseOptions(model_asset_path=model),running_mode=mp.tasks.vision.RunningMode.VIDEO,num_poses=1,min_pose_detection_confidence=.45,min_pose_presence_confidence=.45,min_tracking_confidence=.45)
@@ -170,6 +171,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
                 idx=total;total+=1
                 if idx%every_n:continue
                 sampled+=1;result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),int(idx*1000/source_fps))
+                if world_result_consumer is not None: world_results.append(result.pose_world_landmarks[0] if result.pose_world_landmarks else None)
                 if not result.pose_landmarks:
                     for v in signals.values():v.append(None)
                     continue
@@ -225,4 +227,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0)->dict:
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    return {'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
+    return output
