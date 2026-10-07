@@ -44,6 +44,26 @@ class Database:
             returning='representation').execute().data)
         return rows[0] if rows else None
 
+    def enqueue_pushup_attempt(self, chat_id: int, user_id: int, day: date,
+                               message_id: int, file_id: str):
+        data = dict(chat_id=chat_id, telegram_user_id=user_id,
+                    report_date=day.isoformat(), telegram_message_id=message_id,
+                    telegram_file_id=file_id, status='processing')
+        rows = (self.client.table('pushup_attempts').upsert(
+            data, on_conflict='chat_id,telegram_message_id', ignore_duplicates=True,
+            returning='representation').execute().data)
+        return rows[0] if rows else None
+
+    def claim_next_pushup_attempt(self):
+        rows = self.client.rpc('claim_next_pushup_attempt').execute().data
+        return rows[0] if rows else None
+
+    def fail_pushup_attempt(self, attempt_id: int, error: str):
+        return (self.client.table('pushup_attempts').update({
+                    'last_error': error[:1000],
+                    'processing_started_at': None,
+                }).eq('id', attempt_id).eq('status', 'processing').execute().data)
+
     def finish_pushup_attempt(self, chat_id: int, message_id: int, status: str,
                               rejection_reason: str | None = None):
         data = dict(status=status, rejection_reason=rejection_reason,
