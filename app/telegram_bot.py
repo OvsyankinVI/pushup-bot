@@ -11,7 +11,7 @@ from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
 from app.summaries import format_summary, today_moscow
-from app.world_pose_analysis import analyze_world_pose
+from app.world_pose_analysis import analyze_world_landmarks
 
 logger=logging.getLogger(__name__);update_failed=ContextVar('update_failed',default=False)
 def is_admin(user_id,settings)->bool:return settings.admin_telegram_id is not None and user_id==settings.admin_telegram_id
@@ -50,7 +50,7 @@ def build_application(settings,db):
             with tempfile.NamedTemporaryFile(prefix='pushup_',suffix='.mp4',delete=False) as f:temp_path=f.name
             await telegram_file.download_to_drive(custom_path=temp_path)
             if not os.path.isfile(temp_path) or os.path.getsize(temp_path)<=0:raise ValueError('Downloaded video note is empty')
-            metrics=await asyncio.to_thread(analyze_pose_visibility,temp_path);world=await asyncio.to_thread(analyze_world_pose,temp_path);metrics['world_geometry']=world
+            metrics=await asyncio.to_thread(analyze_pose_visibility,temp_path,6.0,analyze_world_landmarks);world=metrics['world_geometry']
             classification=classify_pushup_attempt(metrics);status=classification['status'];class_reason=classification['reason'];final_count=int(classification.get('count') or 0);confidence=round(metrics['usable_ratio'],4);candidates=metrics.get('candidates',[]);geometry=metrics.get('geometry',{})
             signal_diag=';'.join(f"{c['name']}={c['count']}/{c['amplitude']:.3f}/{c['quality']:.3f}" for c in candidates);geometry_diag=f"horizontal={geometry.get('horizontal_ratio',0):.3f},vertical={geometry.get('vertical_ratio',0):.3f},straight={geometry.get('straight_body_ratio',0):.3f},pushup_pose={geometry.get('pushup_pose_ratio',0):.3f},tilt={geometry.get('median_torso_tilt_deg')},bodyline={geometry.get('median_body_line_deg')}"
             world_diag=f"world_horizontal={world.get('horizontal_ratio',0):.3f},world_vertical={world.get('vertical_ratio',0):.3f},world_straight={world.get('straight_body_ratio',0):.3f},world_pushup={world.get('pushup_pose_ratio',0):.3f},world_verticality={world.get('median_torso_verticality')},world_bodyline={world.get('median_body_line_deg')},gated_segments={world.get('gated_segments',0)},gated_ratio={world.get('gated_ratio',0):.3f},gated_count={world.get('gated_pushup_count',0)}"
