@@ -391,6 +391,50 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
             'evaluated':len(samples),'phase_agreement_ratio':round(agreements/len(samples),3) if samples else None,
             'median_shoulder_excursion':round(statistics.median(s['shoulder_excursion'] for s in samples),3) if samples else None,
             'cycles':samples,'mode':'diagnostic_only'}
+    # Diagnostic-only signal reliability. These scores rank signal quality,
+    # NOT the probability that a candidate is a real push-up.
+    signal_reliability={}
+    for side in ('left','right'):
+        cycles=front_cycles[side].get('details',[])
+        times=[c['time'] for c in cycles]
+        intervals=[b-a for a,b in zip(times,times[1:]) if b>a]
+        strengths=[min(c['rise'],c['fall']) for c in cycles]
+        coverage=lcov if side=='left' else rcov
+        visibility=lavg if side=='left' else ravg
+        angle_n=angle_shadow[side]['count']
+        front_n=len(cycles)
+        full_n=full_cycle_shadow[side]['count']
+        if len(intervals)>=3:
+            med_interval=statistics.median(intervals)
+            regularity=sum(abs(v-med_interval)<=max(.25,med_interval*.35) for v in intervals)/len(intervals)
+        else:
+            med_interval=None
+            regularity=None
+        if len(strengths)>=3:
+            med_strength=statistics.median(strengths)
+            amplitude_stability=sum(.5*med_strength<=v<=2*med_strength for v in strengths)/len(strengths) if med_strength>0 else None
+        else:
+            med_strength=None
+            amplitude_stability=None
+        # Relative agreement is symmetric; a zero-count method does not
+        # silently become supporting evidence for a positive count.
+        def agreement(other):
+            if not front_n or not other:return None
+            return round(min(front_n,other)/max(front_n,other),3)
+        paired_n=sum(1 for p in pairs if p['left']['time'] in times or p['right']['time'] in times)
+        components={'coverage':coverage,'visibility':visibility,
+                    'interval_regularity':regularity,'amplitude_stability':amplitude_stability}
+        available=[v for v in components.values() if v is not None]
+        score=round(sum(available)/len(available),3) if available else None
+        signal_reliability[side]={
+            'score':score,'components':{k:round(v,3) if v is not None else None for k,v in components.items()},
+            'front_count':front_n,'angle_count':angle_n,'full_cycle_count':full_n,
+            'paired_count':paired_n,'angle_agreement':agreement(angle_n),
+            'full_cycle_agreement':agreement(full_n),
+            'median_interval':round(med_interval,3) if med_interval is not None else None,
+            'median_strength':round(med_strength,3) if med_strength is not None else None,
+            'mode':'diagnostic_only'}
+    signal_reliability['mode']='diagnostic_only'
     geometry={
         'frames':geometry_frames,
         'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
@@ -400,6 +444,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
