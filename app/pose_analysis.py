@@ -418,7 +418,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
             amplitude_stability=None
         # Relative agreement is symmetric; a zero-count method does not
         # silently become supporting evidence for a positive count.
-        def agreement(other):
+        def count_agreement(other):
             if not front_n or not other:return None
             return round(min(front_n,other)/max(front_n,other),3)
         paired_n=sum(1 for p in pairs if p['left']['time'] in times or p['right']['time'] in times)
@@ -429,8 +429,8 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         signal_reliability[side]={
             'score':score,'components':{k:round(v,3) if v is not None else None for k,v in components.items()},
             'front_count':front_n,'angle_count':angle_n,'full_cycle_count':full_n,
-            'paired_count':paired_n,'angle_agreement':agreement(angle_n),
-            'full_cycle_agreement':agreement(full_n),
+            'paired_count':paired_n,'angle_agreement':count_agreement(angle_n),
+            'full_cycle_agreement':count_agreement(full_n),
             'median_interval':round(med_interval,3) if med_interval is not None else None,
             'median_strength':round(med_strength,3) if med_strength is not None else None,
             'mode':'diagnostic_only'}
