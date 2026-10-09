@@ -45,11 +45,12 @@ def classify_pushup_attempt(metrics: dict) -> dict:
     left=front.get('left') or {}
     right=front.get('right') or {}
     lc=int(left.get('count') or 0);rc=int(right.get('count') or 0)
+    paired=int((front.get('paired') or {}).get('count') or 0)
     if (temporal_count == 0 and horizontal >= .70 and vertical <= .20
             and usable >= .70 and pose >= .70 and lc >= 3 and rc >= 3
-            and abs(lc-rc) <= max(3,round(max(lc,rc)*.20))):
+            and paired >= 3 and abs(lc-rc) <= max(3,round(max(lc,rc)*.20))):
         return {'status':'accepted','reason':'front_view_dual_arm_2d_cycles',
-                'count':min(lc,rc)}
+                'count':paired}
 
     if legacy_count == 0 and usable >= 0.65 and pose >= 0.75:
         return {'status':'rejected','reason':'no_pushup_cycles_detected','count':0}
