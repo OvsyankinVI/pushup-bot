@@ -185,6 +185,62 @@ def _front_view_cycles(values, fps, min_amplitude=.04):
     return {'count':len(accepted),'timestamps':[round(i/fps,2) for i in accepted],'amplitude':round(amplitude,3),'details':details}
 
 
+def _full_cycle_shadow(angle_values, shoulder_values, fps):
+    """Experimental complete bend/extend transitions, never used for scoring.
+
+    Adaptive local angle range prevents a single global threshold from
+    dominating clips with changing camera geometry. Shoulder movement is
+    supporting evidence only; it is not a hard gate across camera angles.
+    """
+    angle=_smooth(angle_values, radius=2)
+    shoulder=_smooth(shoulder_values, radius=2)
+    n=len(angle)
+    if n<max(12,int(fps*3)):
+        return {'count':0,'timestamps':[],'candidates':[],'mode':'diagnostic_only'}
+    window=max(12,round(fps*7))
+    phase='seek_extended'
+    bent_at=None
+    bent_angle=None
+    last_count=-100000
+    candidates=[]
+    for i,v in enumerate(angle):
+        if v is None:continue
+        local=sorted(x for x in angle[max(0,i-window//2):min(n,i+window//2+1)] if x is not None)
+        if len(local)<max(8,round(fps*2)):continue
+        low=local[int((len(local)-1)*.20)]
+        high=local[int((len(local)-1)*.80)]
+        span=high-low
+        if span<12.0:continue
+        lower=low+.38*span
+        upper=low+.65*span
+        if phase=='seek_extended':
+            if v>=upper:phase='seek_bent'
+        elif phase=='seek_bent':
+            if v<=lower:
+                bent_at=i
+                bent_angle=v
+                phase='seek_return'
+        elif phase=='seek_return':
+            if v<bent_angle:
+                bent_angle=v
+                bent_at=i
+            if v>=upper:
+                if bent_at is not None and i-bent_at>=max(1,round(fps*.17)) and i-last_count>=max(2,round(fps*.45)):
+                    lo=max(0,bent_at-round(fps*.6))
+                    hi=min(n,i+1)
+                    valid=[shoulder[j] for j in range(lo,hi) if shoulder[j] is not None]
+                    shoulder_range=max(valid)-min(valid) if len(valid)>=3 else None
+                    candidates.append({'time':round(i/fps,2),'bent_at':round(bent_at/fps,2),
+                                       'angle_depth':round(v-bent_angle,1),
+                                       'shoulder_range':round(shoulder_range,3) if shoulder_range is not None else None})
+                    last_count=i
+                phase='seek_bent'
+                bent_at=None
+                bent_angle=None
+    return {'count':len(candidates),'timestamps':[x['time'] for x in candidates],
+            'candidates':candidates,'mode':'diagnostic_only'}
+
+
 def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
@@ -262,6 +318,10 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     angle_counts=[angle_shadow[side]['count'] for side in ('left','right')]
     angle_shadow['suggested']=min(angle_counts) if all(n>=3 for n in angle_counts) else max(angle_counts)
     angle_shadow['mode']='diagnostic_only'
+    full_cycle_shadow={side:_full_cycle_shadow(signals[f'{side}_angle'],
+                                                signals[f'{side}_shoulder_y'],actual_fps)
+                       for side in ('left','right')}
+    full_cycle_shadow['mode']='diagnostic_only'
     # Two-arm peaks must represent the same repetition, not independent noise.
     left=front_cycles['left']['details'];right=front_cycles['right']['details']
     pairs=[];used=set()
@@ -340,6 +400,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
