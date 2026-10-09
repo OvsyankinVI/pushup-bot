@@ -5,6 +5,8 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
     def num(value, digits=2):
         return 'n/a' if value is None else f'{value:.{digits}f}'
     lines=[
+        f"🏋️ ОПРЕДЕЛЕНО ОТЖИМАНИЙ: {classification['count']}",
+        f"Результат: {classification['status']} | {classification['reason']}",
         '🔬 PUSHUP DIAGNOSTICS',
         f"Attempt: {attempt_id} | Message: {message_id}",
         f"Status: {classification['status']} | Count: {classification['count']}",
@@ -23,6 +25,9 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
     ]
     for item in metrics.get('candidates',[]):
         lines.append(f"{item['name']}: cycles={item['count']}, amp={item['amplitude']}, quality={item['quality']}")
+    lines.append('— FRONT VIEW 2D CYCLES —')
+    for side,info in (metrics.get('front_cycles') or {}).items():
+        lines.append(f"{side}: cycles={info['count']} amp={info['amplitude']} timestamps={info['timestamps']}")
     lines.append('— 3D SEGMENTS —')
     for i,s in enumerate(world.get('segment_details',[]),1):
         lines.extend([
@@ -34,7 +39,7 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
             f"left/right leg visibility={num(s.get('left_leg_visibility'))}/{num(s.get('right_leg_visibility'))} reliable={s.get('reliable_leg_sides')}",
         ])
     if not world.get('segment_details'):lines.append('No 3D segments passed segmentation minimum duration.')
-    lines.append('Classifier thresholds: pose>=0.35, usable>=0.25; temporal_count>0 required for acceptance.')
+    lines.append('Classifier: 3D temporal primary; dual-arm 2D fallback when 3D horizontal and 3D elbow cycles absent.')
     # Telegram hard limit is 4096 characters; split only at line boundaries.
     chunks=[];current=''
     for line in lines:
