@@ -153,6 +153,37 @@ def _choose_consensus(candidates,dominant_side=None):
     return chosen['count'],chosen['name'],agreement
 
 
+def _front_view_cycles(values, fps, min_amplitude=.04):
+    """Per-cycle local peaks, avoiding one global threshold across a long clip."""
+    smooth=_smooth(values,radius=1)
+    valid=[v for v in smooth if v is not None]
+    if len(valid)<max(8,int(fps*2)):return {'count':0,'timestamps':[],'amplitude':0.0}
+    lo,hi=sorted(valid)[int((len(valid)-1)*.1)],sorted(valid)[int((len(valid)-1)*.9)]
+    amplitude=hi-lo
+    if amplitude<min_amplitude:return {'count':0,'timestamps':[],'amplitude':round(amplitude,3)}
+    min_sep=max(2,round(fps*.38))
+    prominence=max(min_amplitude*.7,amplitude*.12)
+    extrema=[]
+    for i in range(1,len(smooth)-1):
+        a,b,c=smooth[i-1:i+2]
+        if a is None or b is None or c is None:continue
+        kind='peak' if b>=a and b>c else ('valley' if b<=a and b<c else None)
+        if kind is None:continue
+        if extrema and kind==extrema[-1][1]:
+            old=extrema[-1]
+            if (kind=='peak' and b>old[2]) or (kind=='valley' and b<old[2]):extrema[-1]=(i,kind,b)
+            continue
+        extrema.append((i,kind,b))
+    accepted=[]
+    for j in range(1,len(extrema)-1):
+        before,mid,after=extrema[j-1:j+2]
+        if mid[1]!='peak' or before[1]!='valley' or after[1]!='valley':continue
+        if min(mid[2]-before[2],mid[2]-after[2])<prominence:continue
+        if accepted and mid[0]-accepted[-1]<min_sep:continue
+        accepted.append(mid[0])
+    return {'count':len(accepted),'timestamps':[round(i/fps,2) for i in accepted],'amplitude':round(amplitude,3)}
+
+
 def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
@@ -218,6 +249,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         else:count,amp,quality=_count_cycles(_smooth(values),actual_fps,thresholds[name])
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
     count,selected,agreement=_choose_consensus(candidates,dominant_side)
+    front_cycles={side:_front_view_cycles(signals[f'{side}_elbow_y'],actual_fps) for side in ('left','right')}
     geometry={
         'frames':geometry_frames,
         'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
@@ -227,6 +259,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
