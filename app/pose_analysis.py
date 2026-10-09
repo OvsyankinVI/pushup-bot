@@ -253,6 +253,15 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
     count,selected,agreement=_choose_consensus(candidates,dominant_side)
     front_cycles={side:_front_view_cycles(signals[f'{side}_elbow_y'],actual_fps) for side in ('left','right')}
+    # Diagnostic-only local elbow-angle cycle candidates. Keep the existing
+    # 3D and paired 2D classification paths completely unchanged.
+    angle_shadow={}
+    for side in ('left','right'):
+        info=_front_view_cycles(signals[f'{side}_angle'],actual_fps,min_amplitude=10.0)
+        angle_shadow[side]=info
+    angle_counts=[angle_shadow[side]['count'] for side in ('left','right')]
+    angle_shadow['suggested']=min(angle_counts) if all(n>=3 for n in angle_counts) else max(angle_counts)
+    angle_shadow['mode']='diagnostic_only'
     # Two-arm peaks must represent the same repetition, not independent noise.
     left=front_cycles['left']['details'];right=front_cycles['right']['details']
     pairs=[];used=set()
@@ -316,7 +325,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                             'shoulder_excursion':round(shoulder_excursion,3),
                             'elbow_excursion':round(elbow_excursion,3),
                             'phase_agree':direction_agreement,
-                            'relative_shoulder_motion':round(shoulder_excursion/max(elbow_excursion,1e-6),3)})
+                            'relative_shoulder_motion':round(shoulder_excursion/elbow_excursion,3) if elbow_excursion>=.03 else None})
         agreements=sum(bool(s['phase_agree']) for s in samples)
         motion_consistency[side]={
             'evaluated':len(samples),'phase_agreement_ratio':round(agreements/len(samples),3) if samples else None,
@@ -331,6 +340,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
