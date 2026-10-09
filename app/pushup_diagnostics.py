@@ -35,6 +35,12 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
         else:
             lines.append(f"{side}: cycles={info['count']} amp={info['amplitude']} timestamps={info['timestamps']}")
     shadow=metrics.get('single_arm_shadow') or {}
+    angle=metrics.get('angle_shadow') or {}
+    left_angle=angle.get('left') or {}
+    right_angle=angle.get('right') or {}
+    lines.append(f"ANGLE SHADOW (NO COUNT EFFECT): left={left_angle.get('count',0)} | right={right_angle.get('count',0)} | suggested={angle.get('suggested',0)}")
+    for side,info in (('left',left_angle),('right',right_angle)):
+        lines.append(f"angle {side}: amp={info.get('amplitude',0)} timestamps={info.get('timestamps',[])}")
     lines.append('— SINGLE ARM SHADOW (DOES NOT AFFECT COUNT) —')
     lines.append(f"Suggested: {shadow.get('suggested_count',0)} | side: {shadow.get('suggested_side','none')} | mode: diagnostic_only")
     for item in shadow.get('candidates',[]):
