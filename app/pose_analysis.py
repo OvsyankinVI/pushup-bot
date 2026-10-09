@@ -241,6 +241,42 @@ def _full_cycle_shadow(angle_values, shoulder_values, fps):
             'candidates':candidates,'mode':'diagnostic_only'}
 
 
+
+def _simple_head_counter(values, fps):
+    """Independent head-signal peak counter; diagnostic only."""
+    smooth=_smooth(values,radius=2)
+    valid=[v for v in smooth if v is not None]
+    if len(valid)<max(8,round(fps*3)):
+        return {'count':0,'amplitude':0.0,'coverage':round(len(valid)/max(1,len(smooth)),3),'mode':'diagnostic_only'}
+    ordered=sorted(valid)
+    amplitude=ordered[int((len(ordered)-1)*.90)]-ordered[int((len(ordered)-1)*.10)]
+    if amplitude<=1e-6:
+        return {'count':0,'amplitude':round(amplitude,4),'coverage':round(len(valid)/len(smooth),3),'mode':'diagnostic_only'}
+    # Only one adaptive threshold: a cycle must traverse 30% of the
+    # observed 10th-to-90th percentile motion range in both directions.
+    prominence=amplitude*.30
+    extrema=[]
+    for i in range(1,len(smooth)-1):
+        a,b,c=smooth[i-1:i+2]
+        if a is None or b is None or c is None:continue
+        kind='peak' if b>=a and b>c else ('valley' if b<=a and b<c else None)
+        if kind is None:continue
+        if extrema and extrema[-1][1]==kind:
+            if (kind=='peak' and b>extrema[-1][2]) or (kind=='valley' and b<extrema[-1][2]):
+                extrema[-1]=(i,kind,b)
+        else:extrema.append((i,kind,b))
+    timestamps=[]
+    min_gap=max(2,round(fps*.40))
+    for j in range(1,len(extrema)-1):
+        before,mid,after=extrema[j-1:j+2]
+        if mid[1]!='peak' or before[1]!='valley' or after[1]!='valley':continue
+        if min(mid[2]-before[2],mid[2]-after[2])<prominence:continue
+        if timestamps and mid[0]/fps-timestamps[-1]<min_gap/fps:continue
+        timestamps.append(round(mid[0]/fps,2))
+    return {'count':len(timestamps),'amplitude':round(amplitude,4),
+            'coverage':round(len(valid)/len(smooth),3),'timestamps':timestamps,'mode':'diagnostic_only'}
+
+
 def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
@@ -249,7 +285,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     geometry_frames=horizontal_frames=vertical_frames=straight_frames=pushup_like_frames=0
     world_results=[]
     torso_tilts=[];body_line_angles=[]
-    signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle','left_shoulder_y','right_shoulder_y')}
+    signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle','left_shoulder_y','right_shoulder_y','head_y','head_scale')}
     options=mp.tasks.vision.PoseLandmarkerOptions(base_options=mp.tasks.BaseOptions(model_asset_path=model),running_mode=mp.tasks.vision.RunningMode.VIDEO,num_poses=1,min_pose_detection_confidence=.45,min_pose_presence_confidence=.45,min_tracking_confidence=.45)
     try:
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as landmarker:
@@ -276,6 +312,15 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                 torso=max(sum(parts)/len(parts),.05)
                 if lok and rok:sy=(lm[11].y+lm[12].y)/2;hy=(lm[23].y+lm[24].y)/2;sx=(lm[11].x+lm[12].x)/2;hx=(lm[23].x+lm[24].x)/2
                 else:s,h=(11,23) if lok else (12,24);sy=lm[s].y;hy=lm[h].y;sx=lm[s].x;hx=lm[h].x
+                # Nose position and apparent head width: no arm/3D input.
+                # Missing or low-visibility landmarks remain None.
+                signals['head_y'].append(lm[0].y if lm[0].visibility>=.45 else None)
+                if min(lm[7].visibility,lm[8].visibility)>=.45:
+                    head_width=_distance(lm[7],lm[8])
+                elif min(lm[2].visibility,lm[5].visibility)>=.45:
+                    head_width=_distance(lm[2],lm[5])
+                else:head_width=None
+                signals['head_scale'].append(head_width if head_width is not None and head_width>.005 else None)
                 signals['left_shoulder_y'].append(lm[11].y/torso if lok else None);signals['right_shoulder_y'].append(lm[12].y/torso if rok else None)
                 signals['body_y'].append((sy+hy)/(2*torso));signals['left_elbow_y'].append((lm[13].y-lm[11].y)/torso if lok else None);signals['right_elbow_y'].append((lm[14].y-lm[12].y)/torso if rok else None)
                 for name,s,e,w,okside in (('left_angle',11,13,15,lok),('right_angle',12,14,16,rok)):signals[name].append(_angle(lm[s],lm[e],lm[w]) if okside and min(lm[s].visibility,lm[e].visibility,lm[w].visibility)>=.25 else None)
@@ -303,11 +348,13 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     elif rcov>=.55 and (rcov-lcov>=.18 or ravg-lavg>=.15):dominant_side='right'
     candidates=[];thresholds={'body_y':.05,'left_elbow_y':.04,'right_elbow_y':.04,'left_angle':18.0,'right_angle':18.0}
     for name,values in signals.items():
-        if name.endswith('shoulder_y'):continue
+        if name.endswith('shoulder_y') or name.startswith('head_'):continue
         if dominant_side and name in (f'{dominant_side}_elbow_y',f'{dominant_side}_angle'):count,amp,quality=_count_local_cycles(values,actual_fps,thresholds[name])
         else:count,amp,quality=_count_cycles(_smooth(values),actual_fps,thresholds[name])
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
     count,selected,agreement=_choose_consensus(candidates,dominant_side)
+    head_shadow={key:_simple_head_counter(signals[key],actual_fps) for key in ('head_y','head_scale')}
+    head_shadow['mode']='diagnostic_only'
     front_cycles={side:_front_view_cycles(signals[f'{side}_elbow_y'],actual_fps) for side in ('left','right')}
     # Diagnostic-only local elbow-angle cycle candidates. Keep the existing
     # 3D and paired 2D classification paths completely unchanged.
@@ -490,6 +537,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'repetition_validation':repetition_validation,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'head_shadow':head_shadow,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'repetition_validation':repetition_validation,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
