@@ -36,6 +36,12 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
             f"  regularity={fmt(comp.get('interval_regularity'), 3)} | amplitude={fmt(comp.get('amplitude_stability'), 3)} | interval={fmt(info.get('median_interval'))}s",
             f"  angle_agree={fmt(info.get('angle_agreement'), 3)} | full_agree={fmt(info.get('full_cycle_agreement'), 3)}",
         ])
+    lines.append("— REPETITION VALIDATION SHADOW —")
+    for side in ('left', 'right'):
+        rv=(metrics.get('repetition_validation') or {}).get(side) or {}
+        missing=rv.get('missing_evidence') or {}
+        lines.append(f"{side}: candidates={rv.get('candidates',0)} confirmed={rv.get('confirmed',0)} uncertain={rv.get('uncertain',0)} rejected={rv.get('rejected',0)}")
+        lines.append(f"  missing: angle={missing.get('no_angle',0)} shoulder={missing.get('weak_shoulder',0)} timing={missing.get('irregular_timing',0)} amplitude={missing.get('weak_amplitude',0)}")
     lines.append("— СОГЛАСОВАННОСТЬ ДВИЖЕНИЙ —")
     for side in ('left', 'right'):
         info = motion.get(side) or {}
