@@ -57,6 +57,12 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
         lines.append(f"{side}: evaluated={info['evaluated']} phase_agreement={num(info['phase_agreement_ratio'])} median_shoulder_excursion={num(info['median_shoulder_excursion'],3)}")
         for cycle in info.get('cycles',[]):
             lines.append(f"{side} {cycle['time']}s phase={cycle['phase_agree']} shoulder={cycle['shoulder_excursion']} elbow={cycle['elbow_excursion']} relative={cycle['relative_shoulder_motion']}")
+    lines.append('— SIGNAL RELIABILITY SHADOW (NO COUNT EFFECT) —')
+    for side in ('left','right'):
+        info=(metrics.get('signal_reliability') or {}).get(side) or {}
+        comp=info.get('components') or {}
+        lines.append(f"{side}: quality={num(info.get('score'),3)} coverage={num(comp.get('coverage'),3)} visibility={num(comp.get('visibility'),3)} regularity={num(comp.get('interval_regularity'),3)} amplitude_stability={num(comp.get('amplitude_stability'),3)}")
+        lines.append(f"{side}: front={info.get('front_count')} angle={info.get('angle_count')} full={info.get('full_cycle_count')} paired={info.get('paired_count')} angle_agree={num(info.get('angle_agreement'),3)} full_agree={num(info.get('full_cycle_agreement'),3)} median_interval={num(info.get('median_interval'),2)}s")
     lines.append('— 3D SEGMENTS —')
     for i,s in enumerate(world.get('segment_details',[]),1):
         lines.extend([
