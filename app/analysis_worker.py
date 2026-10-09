@@ -41,7 +41,7 @@ async def process_attempt(application, settings, db, attempt):
         confidence = round(metrics['usable_ratio'], 4)
 
         await asyncio.to_thread(
-            lambda: db.client.table('pushup_attempts').update({
+            lambda: db.client.table(db.attempt_table).update({
                 'status': status,
                 'pushup_count': count,
                 'confidence': confidence,
