@@ -260,6 +260,34 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         _,j,rr=min(options,key=lambda item:item[0]);used.add(j)
         pairs.append({'time':round((l['time']+rr['time'])/2,2),'left':l,'right':rr})
     front_cycles['paired']={'count':len(pairs),'details':pairs}
+    # Shadow-only experiment: single-arm evidence is never used by the
+    # classifier. Compare it with the current paired/3D decisions first.
+    candidate_by_name={item['name']:item for item in candidates}
+    shadow=[]
+    for side in ('left','right'):
+        cycles=front_cycles[side]
+        details=cycles.get('details') or []
+        strengths=[min(item['rise'],item['fall']) for item in details]
+        median_strength=statistics.median(strengths) if strengths else 0.0
+        angle=candidate_by_name[f'{side}_angle']
+        coverage=lcov if side=='left' else rcov
+        mean_visibility=lavg if side=='left' else ravg
+        # This is a candidate, not proof of a push-up. Count is diagnostic.
+        eligible=(coverage>=.70 and mean_visibility>=.65
+                  and cycles['count']>=3 and median_strength>=.10
+                  and angle['count']>=3 and angle['amplitude']>=18.0)
+        shadow.append({'side':side,'count':cycles['count'],
+                       'coverage':round(coverage,3),
+                       'visibility':round(mean_visibility,3),
+                       'median_strength':round(median_strength,3),
+                       'angle_cycles':angle['count'],
+                       'angle_amplitude':angle['amplitude'],
+                       'eligible':eligible})
+    shadow.sort(key=lambda item:(item['eligible'],item['coverage'],
+                                  item['median_strength'],item['count']),reverse=True)
+    single_arm_shadow={'suggested_count':shadow[0]['count'] if shadow and shadow[0]['eligible'] else 0,
+                       'suggested_side':shadow[0]['side'] if shadow and shadow[0]['eligible'] else 'none',
+                       'candidates':shadow,'mode':'diagnostic_only'}
     geometry={
         'frames':geometry_frames,
         'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
@@ -269,6 +297,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'single_arm_shadow':single_arm_shadow,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
