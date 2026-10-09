@@ -27,7 +27,13 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
         lines.append(f"{item['name']}: cycles={item['count']}, amp={item['amplitude']}, quality={item['quality']}")
     lines.append('— FRONT VIEW 2D CYCLES —')
     for side,info in (metrics.get('front_cycles') or {}).items():
-        lines.append(f"{side}: cycles={info['count']} amp={info['amplitude']} timestamps={info['timestamps']}")
+        if side=='paired':
+            lines.append(f"paired cycles={info['count']}")
+            for pair in info['details']:
+                l=pair['left'];r=pair['right']
+                lines.append(f"{pair['time']}s L[{l['start']}-{l['end']}] rise/fall={l['rise']}/{l['fall']} R[{r['start']}-{r['end']}] rise/fall={r['rise']}/{r['fall']}")
+        else:
+            lines.append(f"{side}: cycles={info['count']} amp={info['amplitude']} timestamps={info['timestamps']}")
     lines.append('— 3D SEGMENTS —')
     for i,s in enumerate(world.get('segment_details',[]),1):
         lines.extend([
