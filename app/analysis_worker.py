@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import os
 import tempfile
@@ -28,6 +29,10 @@ async def process_attempt(application, settings, db, attempt):
         if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
             raise ValueError('Downloaded video note is empty')
 
+        with open(temp_path, 'rb') as video_file:
+            media_digest = hashlib.sha256(video_file.read()).hexdigest()
+        media_size = os.path.getsize(temp_path)
+
         metrics = await asyncio.to_thread(
             analyze_pose_visibility, temp_path, 6.0, analyze_world_landmarks)
         world = metrics['world_geometry']
@@ -36,6 +41,19 @@ async def process_attempt(application, settings, db, attempt):
         reason = classification['reason']
         count = int(classification.get('count') or 0)
         confidence = round(metrics['usable_ratio'], 4)
+        front = metrics.get('front_cycles') or {}
+        logger.info(
+            'Pushup diagnostic attempt=%s msg=%s digest=%s size=%s frames=%s '
+            'pose=%s usable=%s left=%s right=%s paired=%s temporal=%s '
+            'horizontal=%s vertical=%s status=%s reason=%s count=%s',
+            attempt_id, message_id, media_digest, media_size,
+            metrics.get('sampled_frames'), metrics.get('pose_ratio'),
+            metrics.get('usable_ratio'), (front.get('left') or {}).get('count'),
+            (front.get('right') or {}).get('count'),
+            (front.get('paired') or {}).get('count'),
+            world.get('gated_pushup_count'), world.get('horizontal_ratio'),
+            world.get('vertical_ratio'), status, reason, count,
+        )
 
         await asyncio.to_thread(
             lambda: db.client.table('pushup_attempts').update({
