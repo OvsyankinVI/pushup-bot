@@ -39,6 +39,11 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
     lines.append(f"Suggested: {shadow.get('suggested_count',0)} | side: {shadow.get('suggested_side','none')} | mode: diagnostic_only")
     for item in shadow.get('candidates',[]):
         lines.append(f"{item['side']}: cycles={item['count']} eligible={item['eligible']} coverage={item['coverage']} visibility={item['visibility']} median_rise_fall={item['median_strength']} angle_cycles={item['angle_cycles']} angle_amp={item['angle_amplitude']}")
+    lines.append('— MOTION CONSISTENCY SHADOW (NO COUNT EFFECT) —')
+    for side,info in (metrics.get('motion_consistency') or {}).items():
+        lines.append(f"{side}: evaluated={info['evaluated']} phase_agreement={num(info['phase_agreement_ratio'])} median_shoulder_excursion={num(info['median_shoulder_excursion'],3)}")
+        for cycle in info.get('cycles',[]):
+            lines.append(f"{side} {cycle['time']}s phase={cycle['phase_agree']} shoulder={cycle['shoulder_excursion']} elbow={cycle['elbow_excursion']} relative={cycle['relative_shoulder_motion']}")
     lines.append('— 3D SEGMENTS —')
     for i,s in enumerate(world.get('segment_details',[]),1):
         lines.extend([
