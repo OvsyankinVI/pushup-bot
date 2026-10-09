@@ -15,8 +15,9 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
         return 'n/a' if value is None else f'{value:.{digits}f}'
 
     lines = [
-        f"🏋️ ОТЖИМАНИЙ: {classification['count']} | {classification['status']}",
-        f"Причина: {classification['reason']}",
+        f"🏋️ СТАРЫЙ АЛГОРИТМ: {classification['count']} | {classification['status']}",
+        f"🆕 НОВЫЙ (HEAD Y): {((metrics.get('head_shadow') or {}).get('head_y') or {}).get('count', 0)}",
+        f"Причина старого: {classification['reason']}",
         f"🔬 TEST | Attempt {attempt_id} | Message {message_id} | {elapsed:.1f}s",
         f"Кадры: {metrics['sampled_frames']} | Pose: {fmt(metrics['pose_ratio'])} | Usable: {fmt(metrics['usable_ratio'])}",
         f"2D: {metrics['pushup_count']} | 3D temporal: {world.get('gated_pushup_count', 0)}",
