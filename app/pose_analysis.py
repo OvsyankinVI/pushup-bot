@@ -174,14 +174,15 @@ def _front_view_cycles(values, fps, min_amplitude=.04):
             if (kind=='peak' and b>old[2]) or (kind=='valley' and b<old[2]):extrema[-1]=(i,kind,b)
             continue
         extrema.append((i,kind,b))
-    accepted=[]
+    accepted=[]; details=[]
     for j in range(1,len(extrema)-1):
         before,mid,after=extrema[j-1:j+2]
         if mid[1]!='peak' or before[1]!='valley' or after[1]!='valley':continue
         if min(mid[2]-before[2],mid[2]-after[2])<prominence:continue
         if accepted and mid[0]-accepted[-1]<min_sep:continue
         accepted.append(mid[0])
-    return {'count':len(accepted),'timestamps':[round(i/fps,2) for i in accepted],'amplitude':round(amplitude,3)}
+        details.append({'time':round(mid[0]/fps,2),'start':round(before[0]/fps,2),'end':round(after[0]/fps,2),'rise':round(mid[2]-before[2],3),'fall':round(mid[2]-after[2],3)})
+    return {'count':len(accepted),'timestamps':[round(i/fps,2) for i in accepted],'amplitude':round(amplitude,3),'details':details}
 
 
 def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
@@ -250,6 +251,15 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
     count,selected,agreement=_choose_consensus(candidates,dominant_side)
     front_cycles={side:_front_view_cycles(signals[f'{side}_elbow_y'],actual_fps) for side in ('left','right')}
+    # Two-arm peaks must represent the same repetition, not independent noise.
+    left=front_cycles['left']['details'];right=front_cycles['right']['details']
+    pairs=[];used=set()
+    for l in left:
+        options=[(abs(l['time']-rr['time']),j,rr) for j,rr in enumerate(right) if j not in used and abs(l['time']-rr['time'])<=.30]
+        if not options:continue
+        _,j,rr=min(options,key=lambda item:item[0]);used.add(j)
+        pairs.append({'time':round((l['time']+rr['time'])/2,2),'left':l,'right':rr})
+    front_cycles['paired']={'count':len(pairs),'details':pairs}
     geometry={
         'frames':geometry_frames,
         'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
