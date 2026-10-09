@@ -61,7 +61,7 @@ def build_application(settings,db):
         # Only original video notes sent in this group are eligible.
         # Telegram exposes both modern and legacy forwarding metadata depending
         # on Bot API / python-telegram-bot versions.
-        if (getattr(update.message,'forward_origin',None) is not None
+        if not settings.pushup_allow_forwarded and (getattr(update.message,'forward_origin',None) is not None
                 or getattr(update.message,'forward_date',None) is not None
                 or getattr(update.message,'forward_from',None) is not None
                 or getattr(update.message,'forward_from_chat',None) is not None):
