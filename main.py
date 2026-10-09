@@ -25,7 +25,7 @@ for name in ('httpx', 'httpcore', 'telegram', 'supabase', 'postgrest'):
 async def lifespan(app):
     settings = Settings.from_env()
     try:
-        db = Database(create_client(settings.supabase_url, settings.supabase_key))
+        db = Database(create_client(settings.supabase_url, settings.supabase_key), staging_queue=settings.pushup_diagnostics_enabled)
         telegram = build_application(settings, db)
         async with telegram:  # initialize / shutdown
             await telegram.start()
