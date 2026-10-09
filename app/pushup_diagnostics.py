@@ -41,6 +41,13 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
     lines.append(f"ANGLE SHADOW (NO COUNT EFFECT): left={left_angle.get('count',0)} | right={right_angle.get('count',0)} | suggested={angle.get('suggested',0)}")
     for side,info in (('left',left_angle),('right',right_angle)):
         lines.append(f"angle {side}: amp={info.get('amplitude',0)} timestamps={info.get('timestamps',[])}")
+    full=metrics.get('full_cycle_shadow') or {}
+    lines.append('— FULL CYCLE SHADOW (NO COUNT EFFECT) —')
+    for side in ('left','right'):
+        info=full.get(side) or {}
+        lines.append(f"full_cycle {side}: count={info.get('count',0)} timestamps={info.get('timestamps',[])}")
+        for cycle in info.get('candidates',[]):
+            lines.append(f"full_cycle {side} {cycle['time']}s bend={cycle['bent_at']}s angle_depth={cycle['angle_depth']} shoulder_range={cycle['shoulder_range']}")
     lines.append('— SINGLE ARM SHADOW (DOES NOT AFFECT COUNT) —')
     lines.append(f"Suggested: {shadow.get('suggested_count',0)} | side: {shadow.get('suggested_side','none')} | mode: diagnostic_only")
     for item in shadow.get('candidates',[]):
