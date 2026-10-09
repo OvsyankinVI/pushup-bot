@@ -2,9 +2,11 @@ import asyncio
 import logging
 import os
 import tempfile
+import time
 from datetime import date, datetime, timezone
 
 from app.admin_alerts import send_admin_alert
+from app.pushup_diagnostics import format_diagnostics
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
@@ -20,6 +22,7 @@ async def process_attempt(application, settings, db, attempt):
     message_id = attempt['telegram_message_id']
     day = attempt['report_date']
     temp_path = None
+    started = time.monotonic()
     try:
         telegram_file = await application.bot.get_file(attempt['telegram_file_id'])
         with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4', delete=False) as f:
@@ -48,8 +51,13 @@ async def process_attempt(application, settings, db, attempt):
                 'last_error': None,
             }).eq('id', attempt_id).execute())
 
+        if settings.pushup_diagnostics_enabled and chat_id == settings.telegram_chat_id:
+            report = format_diagnostics(attempt_id, message_id, metrics, classification, time.monotonic()-started)
+            for chunk in report:
+                await application.bot.send_message(chat_id=chat_id, text=chunk, reply_to_message_id=message_id)
+
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
-        if settings.pushup_results_enabled and replies_enabled:
+        if settings.pushup_results_enabled and replies_enabled and not settings.pushup_diagnostics_enabled:
             total = await asyncio.to_thread(
                 db.daily_pushup_total, chat_id, user_id,
                 date.fromisoformat(day))
