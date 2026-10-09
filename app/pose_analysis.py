@@ -193,7 +193,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     geometry_frames=horizontal_frames=vertical_frames=straight_frames=pushup_like_frames=0
     world_results=[]
     torso_tilts=[];body_line_angles=[]
-    signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle')}
+    signals={n:[] for n in ('body_y','left_elbow_y','right_elbow_y','left_angle','right_angle','left_shoulder_y','right_shoulder_y')}
     options=mp.tasks.vision.PoseLandmarkerOptions(base_options=mp.tasks.BaseOptions(model_asset_path=model),running_mode=mp.tasks.vision.RunningMode.VIDEO,num_poses=1,min_pose_detection_confidence=.45,min_pose_presence_confidence=.45,min_tracking_confidence=.45)
     try:
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as landmarker:
@@ -220,6 +220,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                 torso=max(sum(parts)/len(parts),.05)
                 if lok and rok:sy=(lm[11].y+lm[12].y)/2;hy=(lm[23].y+lm[24].y)/2;sx=(lm[11].x+lm[12].x)/2;hx=(lm[23].x+lm[24].x)/2
                 else:s,h=(11,23) if lok else (12,24);sy=lm[s].y;hy=lm[h].y;sx=lm[s].x;hx=lm[h].x
+                signals['left_shoulder_y'].append(lm[11].y/torso if lok else None);signals['right_shoulder_y'].append(lm[12].y/torso if rok else None)
                 signals['body_y'].append((sy+hy)/(2*torso));signals['left_elbow_y'].append((lm[13].y-lm[11].y)/torso if lok else None);signals['right_elbow_y'].append((lm[14].y-lm[12].y)/torso if rok else None)
                 for name,s,e,w,okside in (('left_angle',11,13,15,lok),('right_angle',12,14,16,rok)):signals[name].append(_angle(lm[s],lm[e],lm[w]) if okside and min(lm[s].visibility,lm[e].visibility,lm[w].visibility)>=.25 else None)
 
@@ -246,6 +247,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     elif rcov>=.55 and (rcov-lcov>=.18 or ravg-lavg>=.15):dominant_side='right'
     candidates=[];thresholds={'body_y':.05,'left_elbow_y':.04,'right_elbow_y':.04,'left_angle':18.0,'right_angle':18.0}
     for name,values in signals.items():
+        if name.endswith('shoulder_y'):continue
         if dominant_side and name in (f'{dominant_side}_elbow_y',f'{dominant_side}_angle'):count,amp,quality=_count_local_cycles(values,actual_fps,thresholds[name])
         else:count,amp,quality=_count_cycles(_smooth(values),actual_fps,thresholds[name])
         candidates.append({'name':name,'count':count,'amplitude':round(amp,3),'quality':round(quality,3)})
@@ -288,6 +290,38 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     single_arm_shadow={'suggested_count':shadow[0]['count'] if shadow and shadow[0]['eligible'] else 0,
                        'suggested_side':shadow[0]['side'] if shadow and shadow[0]['eligible'] else 'none',
                        'candidates':shadow,'mode':'diagnostic_only'}
+    # Read-only diagnostic: is each elbow cycle accompanied by shoulder
+    # displacement in the same phase? Not used in classification.
+    motion_consistency={}
+    for side in ('left','right'):
+        shoulder=_smooth(signals[f'{side}_shoulder_y'],radius=2)
+        elbow=_smooth(signals[f'{side}_elbow_y'],radius=2)
+        samples=[]
+        for cycle in front_cycles[side].get('details',[]):
+            start=max(0,round(cycle['start']*actual_fps))
+            peak=min(len(shoulder)-1,round(cycle['time']*actual_fps))
+            end=min(len(shoulder)-1,round(cycle['end']*actual_fps))
+            if start>=peak or peak>=end:continue
+            s0,s1,s2=shoulder[start],shoulder[peak],shoulder[end]
+            e0,e1,e2=elbow[start],elbow[peak],elbow[end]
+            if any(v is None for v in (s0,s1,s2,e0,e1,e2)):continue
+            erise=e1-e0;efall=e2-e1
+            srise=s1-s0;sfall=s2-s1
+            # Both signals are normalized by torso size. Preserve signed
+            # movement and report correlation, not just a hard pass/fail.
+            direction_agreement=(erise*srise>0 and efall*sfall>0)
+            shoulder_excursion=min(abs(srise),abs(sfall))
+            elbow_excursion=min(abs(erise),abs(efall))
+            samples.append({'time':cycle['time'],
+                            'shoulder_excursion':round(shoulder_excursion,3),
+                            'elbow_excursion':round(elbow_excursion,3),
+                            'phase_agree':direction_agreement,
+                            'relative_shoulder_motion':round(shoulder_excursion/max(elbow_excursion,1e-6),3)})
+        agreements=sum(bool(s['phase_agree']) for s in samples)
+        motion_consistency[side]={
+            'evaluated':len(samples),'phase_agreement_ratio':round(agreements/len(samples),3) if samples else None,
+            'median_shoulder_excursion':round(statistics.median(s['shoulder_excursion'] for s in samples),3) if samples else None,
+            'cycles':samples,'mode':'diagnostic_only'}
     geometry={
         'frames':geometry_frames,
         'horizontal_ratio':horizontal_frames/geometry_frames if geometry_frames else 0.0,
@@ -297,6 +331,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'single_arm_shadow':single_arm_shadow,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
