@@ -391,6 +391,52 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
             'evaluated':len(samples),'phase_agreement_ratio':round(agreements/len(samples),3) if samples else None,
             'median_shoulder_excursion':round(statistics.median(s['shoulder_excursion'] for s in samples),3) if samples else None,
             'cycles':samples,'mode':'diagnostic_only'}
+    # Per-repetition validation is diagnostic only: no classification changes.
+    repetition_validation={}
+    for side in ('left','right'):
+        elbow_details=front_cycles[side].get('details',[])
+        angle_times=angle_shadow[side].get('timestamps',[])
+        full_times=full_cycle_shadow[side].get('timestamps',[])
+        shoulder=_smooth(signals[f'{side}_shoulder_y'],radius=2)
+        intervals=[b['time']-a['time'] for a,b in zip(elbow_details,elbow_details[1:])]
+        median_interval=statistics.median(intervals) if intervals else None
+        strengths=[min(c['rise'],c['fall']) for c in elbow_details]
+        median_strength=statistics.median(strengths) if strengths else None
+        accepted=uncertain=rejected=0
+        reasons={'no_angle':0,'weak_shoulder':0,'irregular_timing':0,'weak_amplitude':0}
+        examples=[]
+        for idx,c in enumerate(elbow_details):
+            center=c['time']
+            # Angle minima and elbow-position maxima can be out of phase.
+            # Match within the candidate's full start/end interval, capped
+            # to avoid claiming evidence from an unrelated repetition.
+            half_window=min(0.75,max(0.35,(c['end']-c['start'])/2))
+            angle_ok=any(abs(t-center)<=half_window for t in angle_times)
+            full_ok=any(abs(t-center)<=half_window for t in full_times)
+            start=max(0,round(c['start']*actual_fps))
+            end=min(len(shoulder),round(c['end']*actual_fps)+1)
+            shoulder_valid=[v for v in shoulder[start:end] if v is not None]
+            shoulder_range=max(shoulder_valid)-min(shoulder_valid) if len(shoulder_valid)>=3 else None
+            shoulder_ok=shoulder_range is not None and shoulder_range>=.12
+            amplitude_ok=median_strength is not None and min(c['rise'],c['fall'])>=max(.04,median_strength*.45)
+            gap=center-elbow_details[idx-1]['time'] if idx else None
+            timing_ok=gap is None or median_interval is None or .5*median_interval<=gap<=2.5*median_interval
+            # Shoulder displacement is supporting evidence, not mandatory:
+            # normalized coordinates are camera-dependent.
+            evidence=int(angle_ok)+int(full_ok)+int(shoulder_ok)+int(amplitude_ok)+int(timing_ok)
+            if evidence>=4 and (angle_ok or full_ok):label='confirmed';accepted+=1
+            elif evidence>=2:label='uncertain';uncertain+=1
+            else:label='rejected';rejected+=1
+            if not angle_ok:reasons['no_angle']+=1
+            if not shoulder_ok:reasons['weak_shoulder']+=1
+            if not timing_ok:reasons['irregular_timing']+=1
+            if not amplitude_ok:reasons['weak_amplitude']+=1
+            if label!='confirmed' and len(examples)<5:examples.append({'time':center,'label':label,'evidence':evidence})
+        repetition_validation[side]={'candidates':len(elbow_details),'confirmed':accepted,
+                                    'uncertain':uncertain,'rejected':rejected,
+                                    'missing_evidence':reasons,'examples':examples,
+                                    'mode':'diagnostic_only'}
+    repetition_validation['mode']='diagnostic_only'
     # Diagnostic-only signal reliability. These scores rank signal quality,
     # NOT the probability that a candidate is a real push-up.
     signal_reliability={}
@@ -444,6 +490,6 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
         'median_torso_tilt_deg':statistics.median(torso_tilts) if torso_tilts else None,
         'median_body_line_deg':statistics.median(body_line_angles) if body_line_angles else None,
     }
-    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
+    output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'repetition_validation':repetition_validation,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
     return output
