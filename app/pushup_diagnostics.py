@@ -34,6 +34,11 @@ def format_diagnostics(attempt_id, message_id, metrics, classification, elapsed)
                 lines.append(f"{pair['time']}s L[{l['start']}-{l['end']}] rise/fall={l['rise']}/{l['fall']} R[{r['start']}-{r['end']}] rise/fall={r['rise']}/{r['fall']}")
         else:
             lines.append(f"{side}: cycles={info['count']} amp={info['amplitude']} timestamps={info['timestamps']}")
+    shadow=metrics.get('single_arm_shadow') or {}
+    lines.append('— SINGLE ARM SHADOW (DOES NOT AFFECT COUNT) —')
+    lines.append(f"Suggested: {shadow.get('suggested_count',0)} | side: {shadow.get('suggested_side','none')} | mode: diagnostic_only")
+    for item in shadow.get('candidates',[]):
+        lines.append(f"{item['side']}: cycles={item['count']} eligible={item['eligible']} coverage={item['coverage']} visibility={item['visibility']} median_rise_fall={item['median_strength']} angle_cycles={item['angle_cycles']} angle_amp={item['angle_amplitude']}")
     lines.append('— 3D SEGMENTS —')
     for i,s in enumerate(world.get('segment_details',[]),1):
         lines.extend([
