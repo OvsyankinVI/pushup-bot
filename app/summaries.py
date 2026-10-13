@@ -87,3 +87,48 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
         lines.extend(['', '👀 Кажется, кто-то филонит.' if kind == 'evening'
                       else '💸 Кажется, у нас появились должники.'])
     return '\n'.join(lines)
+
+
+def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date) -> str:
+    end = week_start + timedelta(days=6)
+    lines = [f'🏆 Итоги недели {week_start:%d.%m}–{end:%d.%m}', '']
+    for member, score, place in leaderboard(members, totals):
+        if not score:
+            continue
+        icon = MEDALS[place - 1] if place <= 3 else '✅'
+        lines.append(f"{icon} {member['display_name']} — {score} отж.")
+    if len(lines) == 2:
+        lines.append('Пока нет засчитанных отжиманий.')
+    lines.extend(['', f'🏋️ Всего за неделю: {sum(max(0, int(v)) for v in totals.values())}'])
+    return '\n'.join(lines)
+
+
+def rival_challenge(members: list[dict], totals: dict[int, int], user_id: int) -> str | None:
+    ranked = leaderboard(members, totals)
+    current = next(((score, place) for m, score, place in ranked
+                    if m['telegram_user_id'] == user_id), None)
+    if current is None or current[0] <= 0 or current[1] == 1:
+        return None
+    better = [(m, score) for m, score, _ in ranked if score > current[0]]
+    if not better:
+        return None
+    rival, score = min(better, key=lambda item: (item[1], item[0]['display_name'].casefold()))
+    return f"🎯 Ещё {score - current[0] + 1} отж. — и обгонишь {rival['display_name']}!"
+
+
+def overtaken_message(before: dict[int, int], after: dict[int, int],
+                      members: list[dict], user_id: int) -> str | None:
+    """Only notify the previous sole leader if a new leader strictly surpasses them."""
+    old_leaders = [uid for uid, score in before.items() if score > 0 and score == max(before.values())]
+    new_score = after.get(user_id, 0)
+    if len(old_leaders) != 1 or old_leaders[0] == user_id:
+        return None
+    former_id = old_leaders[0]
+    if new_score <= before[former_id] or sum(v == new_score for v in after.values()) != 1:
+        return None
+    names = {m['telegram_user_id']: m['display_name'] for m in members}
+    if former_id not in names or user_id not in names:
+        return None
+    return (f"👑 Новый лидер — {names[user_id]}!\\n"
+            f"{names[former_id]}, тебя обогнали. "
+            f"Ещё {new_score - after.get(former_id, 0) + 1} отж. — и вернёшь первое место!")
