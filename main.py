@@ -14,6 +14,7 @@ from app.database import Database
 from app.safe_logging import log_exception
 from app.summaries import format_summary, midnight_report_date, today_moscow
 from app.telegram_bot import build_application, update_failed
+from app.miniapp import router as miniapp_router
 
 logger = logging.getLogger(__name__)
 # HTTP client URLs can contain bot tokens. Never enable their request logs.
@@ -54,6 +55,7 @@ async def lifespan(app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(miniapp_router)
 
 
 def check_secret(provided: str | None, expected: str):
