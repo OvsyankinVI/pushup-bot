@@ -10,6 +10,7 @@ from app.admin_alerts import send_admin_alert
 from app.pushup_diagnostics import format_diagnostics
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
+from app.summaries import rank_for_user, promotion_message
 from app.safe_logging import log_exception
 from app.world_pose_analysis import analyze_world_landmarks
 
@@ -58,6 +59,12 @@ async def process_attempt(application, settings, db, attempt):
             world.get('vertical_ratio'), status, reason, count,
         )
 
+        medal_before = None
+        if status == 'accepted' and count > 0:
+            members_before = await asyncio.to_thread(db.members, chat_id)
+            totals_before = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
+            medal_before = rank_for_user(members_before, totals_before, user_id)
+
         await asyncio.to_thread(
             lambda: db.client.table(db.attempt_table).update({
                 'status': status,
@@ -69,10 +76,19 @@ async def process_attempt(application, settings, db, attempt):
                 'last_error': None,
             }).eq('id', attempt_id).execute())
 
+        medal_notice = None
+        if status == 'accepted' and count > 0:
+            members_after = await asyncio.to_thread(db.members, chat_id)
+            totals_after = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
+            medal_after = rank_for_user(members_after, totals_after, user_id)
+            medal_notice = promotion_message(medal_before, medal_after)
+
         if settings.pushup_diagnostics_enabled and chat_id == settings.telegram_chat_id:
             report = format_diagnostics(attempt_id, message_id, metrics, classification, time.monotonic()-started)
             for chunk in report:
                 await application.bot.send_message(chat_id=chat_id, text=chunk, reply_to_message_id=message_id)
+            if medal_notice:
+                await application.bot.send_message(chat_id=chat_id, text=medal_notice, reply_to_message_id=message_id)
 
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
         if settings.pushup_results_enabled and replies_enabled and not settings.pushup_diagnostics_enabled:
@@ -85,6 +101,8 @@ async def process_attempt(application, settings, db, attempt):
                 text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
                 text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
+            if medal_notice:
+                text += '\n\n' + medal_notice
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
