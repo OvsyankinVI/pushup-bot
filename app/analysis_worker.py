@@ -10,7 +10,7 @@ from app.admin_alerts import send_admin_alert
 from app.pushup_diagnostics import format_diagnostics
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
-from app.summaries import rank_for_user, promotion_message
+from app.summaries import rank_for_user, promotion_message, rival_challenge, overtaken_message
 from app.safe_logging import log_exception
 from app.world_pose_analysis import analyze_world_landmarks
 
@@ -60,10 +60,14 @@ async def process_attempt(application, settings, db, attempt):
         )
 
         medal_before = None
+        best_before = 0
+        totals_before = {}
+        members_before = []
         if status == 'accepted' and count > 0:
             members_before = await asyncio.to_thread(db.members, chat_id)
             totals_before = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
             medal_before = rank_for_user(members_before, totals_before, user_id)
+            best_before = await asyncio.to_thread(db.personal_best, chat_id, user_id)
 
         await asyncio.to_thread(
             lambda: db.client.table(db.attempt_table).update({
@@ -77,18 +81,30 @@ async def process_attempt(application, settings, db, attempt):
             }).eq('id', attempt_id).execute())
 
         medal_notice = None
+        reward_notices = []
         if status == 'accepted' and count > 0:
             members_after = await asyncio.to_thread(db.members, chat_id)
             totals_after = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
             medal_after = rank_for_user(members_after, totals_after, user_id)
             medal_notice = promotion_message(medal_before, medal_after)
+            if count > best_before:
+                reward_notices.append(
+                    f"🏆 Новый личный рекорд за подход: {count} отж.!"
+                    + (f" Предыдущий — {best_before}." if best_before else " Первый рекорд!"))
+            takeover = overtaken_message(totals_before, totals_after, members_after, user_id)
+            if takeover:
+                reward_notices.append(takeover)
+            target = rival_challenge(members_after, totals_after, user_id)
+            if target:
+                reward_notices.append(target)
 
         if settings.pushup_diagnostics_enabled and chat_id == settings.telegram_chat_id:
             report = format_diagnostics(attempt_id, message_id, metrics, classification, time.monotonic()-started)
             for chunk in report:
                 await application.bot.send_message(chat_id=chat_id, text=chunk, reply_to_message_id=message_id)
-            if medal_notice:
-                await application.bot.send_message(chat_id=chat_id, text=medal_notice, reply_to_message_id=message_id)
+            notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
+            if notices:
+                await application.bot.send_message(chat_id=chat_id, text='\\n'.join(notices), reply_to_message_id=message_id)
 
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
         if settings.pushup_results_enabled and replies_enabled and not settings.pushup_diagnostics_enabled:
@@ -101,8 +117,9 @@ async def process_attempt(application, settings, db, attempt):
                 text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
                 text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
-            if medal_notice:
-                text += '\n\n' + medal_notice
+            notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
+            if notices:
+                text += '\\n\\n' + '\\n'.join(notices)
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
