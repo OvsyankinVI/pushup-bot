@@ -4,7 +4,7 @@ import os
 import tempfile
 from contextvars import ContextVar
 
-from telegram import Update, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.pose_analysis import analyze_pose_visibility
@@ -22,7 +22,10 @@ def build_application(settings,db):
         if not update.message:return False
         if update.effective_chat.type not in ('group','supergroup'):await update.message.reply_text('Эта команда доступна только в группе.');return False
         return True
-    async def start(update,context):await update.message.reply_text('🏋️ Бот отжиманий на связи!')
+    async def start(update,context):
+        await update.message.reply_text('🏋️ Бот отжиманий на связи!')
+        if update.effective_chat.type == 'private':
+            await update.message.reply_text('Mini App:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('💪 Открыть', web_app=WebAppInfo(url='https://pushup-bot-staging.onrender.com/miniapp'))]]))
     async def myid(update,context):
         if update.effective_user is not None and not update.message.sender_chat:await update.message.reply_text(f'🆔 Ваш Telegram ID: {update.effective_user.id}')
     async def join(update,context):
