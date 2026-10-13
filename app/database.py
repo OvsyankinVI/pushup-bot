@@ -104,6 +104,61 @@ class Database:
             totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
         return totals
 
+    def personal_stats(self, chat_id: int, user_id: int, today: date) -> dict:
+        """Aggregate accepted attempts in batches to avoid Supabase's default row cap."""
+        from collections import defaultdict
+        from datetime import timedelta
+        weekly = defaultdict(int)
+        total = 0
+        best_single = 0
+        offset = 0
+        batch_size = 500
+        while True:
+            rows = (self.client.table('pushup_attempts')
+                    .select('report_date,pushup_count')
+                    .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
+                    .eq('status', 'accepted')
+                    .order('id').range(offset, offset + batch_size - 1)
+                    .execute().data)
+            for row in rows:
+                score = max(0, int(row.get('pushup_count') or 0))
+                day = date.fromisoformat(row['report_date'])
+                week_start = day - timedelta(days=day.weekday())
+                weekly[week_start] += score
+                total += score
+                best_single = max(best_single, score)
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
+        current_week = today - timedelta(days=today.weekday())
+        return {
+            'total': total,
+            'this_week': weekly.get(current_week, 0),
+            'best_week': max(weekly.values(), default=0),
+            'best_single': best_single,
+        }
+
+    def personal_best(self, chat_id: int, user_id: int) -> int:
+        rows = (self.client.table('pushup_attempts').select('pushup_count')
+                .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
+                .eq('status', 'accepted').order('pushup_count', desc=True)
+                .limit(1).execute().data)
+        return max(0, int(rows[0].get('pushup_count') or 0)) if rows else 0
+
+    def weekly_pushup_totals(self, chat_id: int, week_start: date) -> dict[int, int]:
+        from datetime import timedelta
+        week_end = week_start + timedelta(days=6)
+        rows = (self.client.table('pushup_attempts')
+                .select('telegram_user_id,pushup_count')
+                .eq('chat_id', chat_id).gte('report_date', week_start.isoformat())
+                .lte('report_date', week_end.isoformat())
+                .eq('status', 'accepted').execute().data)
+        totals = {}
+        for row in rows:
+            user_id = row['telegram_user_id']
+            totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
+        return totals
+
     def result_replies_enabled(self, chat_id: int) -> bool:
         rows = (self.client.table('chat_settings')
                 .select('pushup_result_replies_enabled').eq('chat_id', chat_id)
