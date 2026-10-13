@@ -9,6 +9,7 @@ from app.admin_alerts import send_admin_alert
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
+from app.summaries import rank_for_user, promotion_message, rival_challenge, overtaken_message
 from app.world_pose_analysis import analyze_world_landmarks
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,15 @@ async def process_attempt(application, settings, db, attempt):
             world.get('vertical_ratio'), status, reason, count,
         )
 
+        medal_before = None
+        best_before = 0
+        totals_before = {}
+        if status == 'accepted' and count > 0:
+            members_before = await asyncio.to_thread(db.members, chat_id)
+            totals_before = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
+            medal_before = rank_for_user(members_before, totals_before, user_id)
+            best_before = await asyncio.to_thread(db.personal_best, chat_id, user_id)
+
         await asyncio.to_thread(
             lambda: db.client.table('pushup_attempts').update({
                 'status': status,
@@ -66,6 +76,23 @@ async def process_attempt(application, settings, db, attempt):
                 'last_error': None,
             }).eq('id', attempt_id).execute())
 
+        notices = []
+        if status == 'accepted' and count > 0:
+            members_after = await asyncio.to_thread(db.members, chat_id)
+            totals_after = await asyncio.to_thread(db.pushup_totals, chat_id, date.fromisoformat(day))
+            medal = promotion_message(medal_before, rank_for_user(members_after, totals_after, user_id))
+            if medal:
+                notices.append(medal)
+            if count > best_before:
+                notices.append(
+                    f"🏆 Новый личный рекорд за подход: {count} отж.!"
+                    + (f" Предыдущий — {best_before}." if best_before else " Первый рекорд!"))
+            takeover = overtaken_message(totals_before, totals_after, members_after, user_id)
+            if takeover:
+                notices.append(takeover)
+            target = rival_challenge(members_after, totals_after, user_id)
+            if target:
+                notices.append(target)
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
         if settings.pushup_results_enabled and replies_enabled:
             total = await asyncio.to_thread(
@@ -77,6 +104,8 @@ async def process_attempt(application, settings, db, attempt):
                 text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
                 text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
+            if notices:
+                text += '\n\n' + '\n'.join(notices[:2])
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
