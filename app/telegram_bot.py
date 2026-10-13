@@ -115,5 +115,5 @@ def build_application(settings,db):
             BotCommand('start', 'Запустить бота'),
             BotCommand('myid', 'Мой Telegram ID'),
         ], scope=BotCommandScopeAllPrivateChats())
-    application.bot_commands_setup = setup_commands
+    application.post_init = lambda app: setup_commands()
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE,video_note));application.add_error_handler(error_handler);return application
