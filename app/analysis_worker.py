@@ -104,7 +104,7 @@ async def process_attempt(application, settings, db, attempt):
                 await application.bot.send_message(chat_id=chat_id, text=chunk, reply_to_message_id=message_id)
             notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
             if notices:
-                await application.bot.send_message(chat_id=chat_id, text='\\n'.join(notices), reply_to_message_id=message_id)
+                await application.bot.send_message(chat_id=chat_id, text='\n'.join(notices), reply_to_message_id=message_id)
 
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
         if settings.pushup_results_enabled and replies_enabled and not settings.pushup_diagnostics_enabled:
@@ -119,7 +119,7 @@ async def process_attempt(application, settings, db, attempt):
                 text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
             notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
             if notices:
-                text += '\\n\\n' + '\\n'.join(notices)
+                text += '\n\n' + '\n'.join(notices)
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
