@@ -106,6 +106,40 @@ class Database:
             totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
         return totals
 
+    def personal_stats(self, chat_id: int, user_id: int, today: date) -> dict:
+        """Aggregate accepted attempts in batches to avoid Supabase's default row cap."""
+        from collections import defaultdict
+        from datetime import timedelta
+        weekly = defaultdict(int)
+        total = 0
+        best_single = 0
+        offset = 0
+        batch_size = 500
+        while True:
+            rows = (self.client.table(self.attempt_table)
+                    .select('report_date,pushup_count')
+                    .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
+                    .eq('status', 'accepted')
+                    .order('id').range(offset, offset + batch_size - 1)
+                    .execute().data)
+            for row in rows:
+                score = max(0, int(row.get('pushup_count') or 0))
+                day = date.fromisoformat(row['report_date'])
+                week_start = day - timedelta(days=day.weekday())
+                weekly[week_start] += score
+                total += score
+                best_single = max(best_single, score)
+            if len(rows) < batch_size:
+                break
+            offset += batch_size
+        current_week = today - timedelta(days=today.weekday())
+        return {
+            'total': total,
+            'this_week': weekly.get(current_week, 0),
+            'best_week': max(weekly.values(), default=0),
+            'best_single': best_single,
+        }
+
     def personal_best(self, chat_id: int, user_id: int) -> int:
         rows = (self.client.table(self.attempt_table).select('pushup_count')
                 .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
