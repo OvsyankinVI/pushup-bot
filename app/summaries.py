@@ -129,6 +129,5 @@ def overtaken_message(before: dict[int, int], after: dict[int, int],
     names = {m['telegram_user_id']: m['display_name'] for m in members}
     if former_id not in names or user_id not in names:
         return None
-    return (f"👑 Новый лидер — {names[user_id]}!\n"
-            f"{names[former_id]}, тебя обогнали. "
+    return (f"👀 {names[former_id]}, тебя обогнали! "
             f"Ещё {new_score - after.get(former_id, 0) + 1} отж. — и вернёшь первое место!")
