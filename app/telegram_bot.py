@@ -4,7 +4,7 @@ import os
 import tempfile
 from contextvars import ContextVar
 
-from telegram import Update
+from telegram import Update, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.pose_analysis import analyze_pose_visibility
@@ -44,6 +44,22 @@ def build_application(settings,db):
         members=await asyncio.to_thread(db.members,update.effective_chat.id)
         totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
         await update.message.reply_text(weekly_summary(members,totals,start))
+    async def stats(update, context):
+        if not await group_only(update):return
+        user = update.effective_user
+        if not user or user.is_bot or update.message.sender_chat:return
+        member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
+        if not member or not member.get('active'):
+            await update.message.reply_text('Сначала зарегистрируйтесь через /join.')
+            return
+        values = await asyncio.to_thread(db.personal_stats, update.effective_chat.id, user.id, today_moscow())
+        await update.message.reply_text(
+            f"🏆 Достижения: {member['display_name']}\n\n"
+            f"💪 Всего отжиманий: {values['total']}\n"
+            f"📅 За текущую неделю: {values['this_week']}\n"
+            f"🔥 Рекорд за неделю: {values['best_week']}\n"
+            f"🥇 Рекорд за один кружок: {values['best_single']}")
+
     async def results_on(update,context):
         if not await group_only(update):return
         if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
@@ -86,5 +102,5 @@ def build_application(settings,db):
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
-    for command,callback in [('start',start),('join',join),('members',members),('today',today),('week',week),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    for command,callback in [('start',start),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE,video_note));application.add_error_handler(error_handler);return application
