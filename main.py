@@ -28,6 +28,8 @@ async def lifespan(app):
         db = Database(create_client(settings.supabase_url, settings.supabase_key), staging_queue=settings.pushup_diagnostics_enabled)
         telegram = build_application(settings, db)
         async with telegram:  # initialize / shutdown
+            if telegram.post_init is not None:
+                await telegram.post_init(telegram)
             await telegram.start()
             app.state.settings = settings
             app.state.db = db
