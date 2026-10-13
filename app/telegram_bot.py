@@ -103,4 +103,17 @@ def build_application(settings,db):
                 update.message.message_id,update.message.video_note.file_id)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
     for command,callback in [('start',start),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    async def setup_commands():
+        await application.bot.set_my_commands([
+            BotCommand('join', 'Присоединиться'),
+            BotCommand('today', 'Рейтинг за сегодня'),
+            BotCommand('week', 'Рейтинг за неделю'),
+            BotCommand('stats', 'Мои достижения'),
+            BotCommand('members', 'Участники'),
+        ], scope=BotCommandScopeAllGroupChats())
+        await application.bot.set_my_commands([
+            BotCommand('start', 'Запустить бота'),
+            BotCommand('myid', 'Мой Telegram ID'),
+        ], scope=BotCommandScopeAllPrivateChats())
+    application.post_init = lambda app: setup_commands()
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE,video_note));application.add_error_handler(error_handler);return application
