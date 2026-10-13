@@ -4,13 +4,13 @@ import os
 import tempfile
 from contextvars import ContextVar
 
-from telegram import Update
+from telegram import Update, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
-from app.summaries import format_summary, today_moscow
+from app.summaries import format_summary, today_moscow, weekly_summary
 from app.world_pose_analysis import analyze_world_landmarks
 
 logger=logging.getLogger(__name__);update_failed=ContextVar('update_failed',default=False)
@@ -36,6 +36,30 @@ def build_application(settings,db):
     async def today(update,context):
         if not await group_only(update):return
         day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals))
+    async def week(update,context):
+        if not await group_only(update):return
+        day=today_moscow()
+        from datetime import timedelta
+        start=day-timedelta(days=day.weekday())
+        members=await asyncio.to_thread(db.members,update.effective_chat.id)
+        totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
+        await update.message.reply_text(weekly_summary(members,totals,start))
+    async def stats(update, context):
+        if not await group_only(update):return
+        user = update.effective_user
+        if not user or user.is_bot or update.message.sender_chat:return
+        member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
+        if not member or not member.get('active'):
+            await update.message.reply_text('Сначала зарегистрируйтесь через /join.')
+            return
+        values = await asyncio.to_thread(db.personal_stats, update.effective_chat.id, user.id, today_moscow())
+        await update.message.reply_text(
+            f"🏆 Достижения: {member['display_name']}\n\n"
+            f"💪 Всего отжиманий: {values['total']}\n"
+            f"📅 За текущую неделю: {values['this_week']}\n"
+            f"🔥 Рекорд за неделю: {values['best_week']}\n"
+            f"🥇 Рекорд за один кружок: {values['best_single']}")
+
     async def results_on(update,context):
         if not await group_only(update):return
         if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
@@ -78,5 +102,18 @@ def build_application(settings,db):
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
-    for command,callback in [('start',start),('join',join),('members',members),('today',today),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    for command,callback in [('start',start),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    async def setup_commands():
+        await application.bot.set_my_commands([
+            BotCommand('join', 'Присоединиться'),
+            BotCommand('today', 'Рейтинг за сегодня'),
+            BotCommand('week', 'Рейтинг за неделю'),
+            BotCommand('stats', 'Мои достижения'),
+            BotCommand('members', 'Участники'),
+        ], scope=BotCommandScopeAllGroupChats())
+        await application.bot.set_my_commands([
+            BotCommand('start', 'Запустить бота'),
+            BotCommand('myid', 'Мой Telegram ID'),
+        ], scope=BotCommandScopeAllPrivateChats())
+    application.post_init = lambda app: setup_commands()
     application.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.ChatType.GROUPS & filters.VIDEO_NOTE,video_note));application.add_error_handler(error_handler);return application
