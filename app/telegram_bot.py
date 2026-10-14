@@ -25,7 +25,7 @@ def build_application(settings,db):
     async def start(update,context):
         await update.message.reply_text('🏋️ Бот отжиманий на связи!')
         if update.effective_chat.type == 'private':
-            await update.message.reply_text('Mini App:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('💪 Открыть', web_app=WebAppInfo(url='https://pushup-bot-staging.onrender.com/miniapp'))]]))
+            await update.message.reply_text('Mini App:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('💪 Открыть', web_app=WebAppInfo(url='https://pushup-bot-staging.onrender.com/miniapp?v=2'))]]))
     async def myid(update,context):
         if update.effective_user is not None and not update.message.sender_chat:await update.message.reply_text(f'🆔 Ваш Telegram ID: {update.effective_user.id}')
     async def join(update,context):
