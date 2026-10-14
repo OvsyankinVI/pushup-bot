@@ -370,7 +370,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                        for side in ('left','right')}
     full_cycle_shadow['mode']='diagnostic_only'
     # Two-arm peaks must represent the same repetition, not independent noise.
-    left=front_cycles['left']['details'];right=front_cycles['right']['details']
+    left=front_cycles['left'].get('details') or [];right=front_cycles['right'].get('details') or []
     pairs=[];used=set()
     for l in left:
         options=[(abs(l['time']-rr['time']),j,rr) for j,rr in enumerate(right) if j not in used and abs(l['time']-rr['time'])<=.30]
