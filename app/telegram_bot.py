@@ -26,6 +26,17 @@ def build_application(settings,db):
         await update.message.reply_text('🏋️ Бот отжиманий на связи!')
         if update.effective_chat.type == 'private':
             await update.message.reply_text('Mini App:', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('💪 Открыть', web_app=WebAppInfo(url='https://pushup-bot-staging.onrender.com/miniapp?v=2'))]]))
+    async def app_command(update, context):
+        if not await group_only(update):
+            return
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton('🚀 Открыть Отжиматор',
+                url='https://t.me/otshumator_test_bot?startapp')
+        ]])
+        await update.message.reply_text(
+            '💪 Отжиматор\\nРейтинг участников и личная статистика.',
+            reply_markup=keyboard)
+
     async def myid(update,context):
         if update.effective_user is not None and not update.message.sender_chat:await update.message.reply_text(f'🆔 Ваш Telegram ID: {update.effective_user.id}')
     async def join(update,context):
@@ -105,9 +116,10 @@ def build_application(settings,db):
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
-    for command,callback in [('start',start),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    for command,callback in [('start',start),('app',app_command),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     async def setup_commands():
         await application.bot.set_my_commands([
+            BotCommand('app', 'Открыть Отжиматор'),
             BotCommand('join', 'Присоединиться'),
             BotCommand('today', 'Рейтинг за сегодня'),
             BotCommand('week', 'Рейтинг за неделю'),
