@@ -79,6 +79,10 @@ async def webhook(request: Request,
         if not isinstance(data, dict) or type(data.get('update_id')) is not int:
             raise ValueError('Invalid update')
         update = Update.de_json(data, request.app.state.telegram.bot)
+        logger.info('Telegram webhook received update_id=%s chat_id=%s kind=%s',
+                    update.update_id,
+                    update.effective_chat.id if update.effective_chat else None,
+                    'command' if update.effective_message and update.effective_message.text and update.effective_message.text.startswith('/') else 'other')
     except Exception:
         raise HTTPException(400, 'Invalid Telegram update') from None
     # PTB expects sequential processing by default. Finish before acknowledging;
@@ -89,6 +93,7 @@ async def webhook(request: Request,
             await request.app.state.telegram.process_update(update)
             if update_failed.get():
                 raise HTTPException(503, 'Update processing failed')
+            logger.info('Telegram webhook processed update_id=%s', update.update_id)
         except HTTPException:
             raise
         except Exception as exc:
