@@ -46,6 +46,18 @@ class Database:
             returning='representation').execute().data)
         return rows[0] if rows else None
 
+    def previously_seen_video(self, chat_id: int, file_id: str, message_id: int) -> bool:
+        """Reject a Telegram video file already queued in this chat, even on another day."""
+        if not file_id:
+            return False
+        rows = (self.client.table(self.attempt_table)
+                .select('id')
+                .eq('chat_id', chat_id)
+                .eq('telegram_file_id', file_id)
+                .neq('telegram_message_id', message_id)
+                .limit(1).execute().data)
+        return bool(rows)
+
     def enqueue_pushup_attempt(self, chat_id: int, user_id: int, day: date,
                                message_id: int, file_id: str):
         data = dict(chat_id=chat_id, telegram_user_id=user_id,
