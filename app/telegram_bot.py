@@ -31,10 +31,10 @@ def build_application(settings,db):
             return
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton('🚀 Открыть Отжиматор',
-                url='https://t.me/otshumator_test_bot?startapp')
+                url='https://t.me/otshumator_test_bot/miniapp')
         ]])
         await update.message.reply_text(
-            '💪 Отжиматор\\nРейтинг участников и личная статистика.',
+            '💪 Отжиматор\nРейтинг участников и личная статистика.',
             reply_markup=keyboard)
 
     async def myid(update,context):
