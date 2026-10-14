@@ -15,7 +15,7 @@ router = APIRouter()
 
 @router.get('/miniapp')
 async def page():
-    return FileResponse(Path(__file__).resolve().parent.parent / 'miniapp' / 'index.html')
+    return FileResponse(Path(__file__).resolve().parent.parent / 'miniapp' / 'index.html', headers={'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'Pragma': 'no-cache', 'Expires': '0'})
 
 def telegram_user(raw, token):
     try:
