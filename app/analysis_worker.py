@@ -36,12 +36,12 @@ async def process_attempt(application, settings, db, attempt):
 
         metrics = await asyncio.to_thread(
             analyze_pose_visibility, temp_path, 6.0, analyze_world_landmarks)
-        world = metrics['world_geometry']
+        world = metrics.get('world_geometry') or {}
         classification = classify_pushup_attempt(metrics)
         status = classification['status']
         reason = classification['reason']
         count = int(classification.get('count') or 0)
-        confidence = round(metrics['usable_ratio'], 4)
+        confidence = round(float(metrics.get('usable_ratio') or 0), 4)
         front = metrics.get('front_cycles') or {}
         logger.info(
             'Pushup diagnostic attempt=%s msg=%s digest=%s size=%s frames=%s '
