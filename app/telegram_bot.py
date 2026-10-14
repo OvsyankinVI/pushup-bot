@@ -110,11 +110,23 @@ def build_application(settings,db):
         day=today_moscow();chat_id=update.effective_chat.id
         member=await asyncio.to_thread(db.member,chat_id,user.id)
         if not member or not member['active']:return
-        await asyncio.to_thread(db.record,chat_id,user.id,day)
+        # Reused Telegram file IDs indicate the same video, even if the
+        # forwarder hid the original sender. Check before daily report credit.
         if settings.pushup_analysis_enabled:
-            await asyncio.to_thread(
+            already_seen = await asyncio.to_thread(
+                db.previously_seen_video, chat_id,
+                update.message.video_note.file_id, update.message.message_id)
+            if already_seen:
+                await update.message.reply_text(
+                    '♻️ Этот кружок уже присылали в чат. Повторные видео не засчитываются — запиши новый кружок!')
+                return
+            attempt = await asyncio.to_thread(
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
+            if attempt is None:
+                # Telegram webhook retries must not grant additional daily credit.
+                return
+        await asyncio.to_thread(db.record,chat_id,user.id,day)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
     for command,callback in [('start',start),('app',app_command),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     async def setup_commands():
