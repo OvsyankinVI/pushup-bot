@@ -51,6 +51,7 @@ async def data(request: Request, authorization: str | None = Header(None)):
         week = db.weekly_pushup_totals(chat_id,day-timedelta(days=day.weekday()))
         stats = db.personal_stats(chat_id,user_id,day)
         totals = {}
+        monthly = {}
         daily = {}
         offset = 0
         while True:
@@ -62,6 +63,8 @@ async def data(request: Request, authorization: str | None = Header(None)):
                 uid=int(row['telegram_user_id'])
                 n=max(0,int(row.get('pushup_count') or 0))
                 totals[uid]=totals.get(uid,0)+n
+                if row['report_date'][:7] == day.isoformat()[:7]:
+                    monthly[uid]=monthly.get(uid,0)+n
                 if uid==user_id:
                     date=row['report_date']
                     daily[date]=daily.get(date,0)+n
@@ -70,7 +73,7 @@ async def data(request: Request, authorization: str | None = Header(None)):
         return {'user':{'id':user_id,'name':member['display_name'],'username':member.get('username')},
                 'date':day.isoformat(),'members':[{'id':int(m['telegram_user_id']),
                 'name':m['display_name'],'reported':int(m['telegram_user_id']) in reported}
-                for m in members],'today':today,'week':week,'all':totals,'stats':stats,'daily':daily}
+                for m in members],'today':today,'week':week,'month':monthly,'all':totals,'stats':stats,'daily':daily}
     result=await asyncio.to_thread(load)
     if result is None:
         raise HTTPException(403,'Сначала зарегистрируйся в тестовом чате через /join')
