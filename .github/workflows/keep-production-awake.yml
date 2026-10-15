@@ -2,9 +2,9 @@ name: Keep production Render awake
 
 on:
   schedule:
-    # GitHub cron uses UTC. Moscow is UTC+3 year-round.
-    # Every 10 minutes from 06:00 through 23:50 Moscow time.
-    - cron: '*/10 3-20 * * *'
+    # UTC+3 = Moscow. Offset minute 3 to avoid GitHub Actions top-of-hour congestion.
+    # 06:03, 06:13, ... 23:53 Moscow time. No pings during 00:00-06:00.
+    - cron: '3-59/10 3-20 * * *'
   workflow_dispatch:
 
 permissions:
@@ -17,12 +17,16 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
-      - name: Ping production Render
+      - name: Ping production and log HTTP status
+        shell: bash
         run: |
+          set -euo pipefail
+          echo "Scheduled keep-alive at $(date -u +'%Y-%m-%dT%H:%M:%SZ') UTC"
           curl --fail --silent --show-error --location \
-            --connect-timeout 20 --max-time 120 \
+            --connect-timeout 20 --max-time 150 \
             --retry 2 --retry-delay 5 \
             --output /dev/null \
+            --write-out 'HTTP %{http_code}, duration %{time_total}s\\n' \
             'https://pushup-bot-kf5u.onrender.com/'
