@@ -112,7 +112,7 @@ def build_application(settings,db):
         if not member or not member['active']:return
         # Reused Telegram file IDs indicate the same video, even if the
         # forwarder hid the original sender. Check before daily report credit.
-        if settings.pushup_analysis_enabled:
+        if settings.pushup_analysis_enabled and not settings.pushup_allow_forwarded:
             already_seen = await asyncio.to_thread(
                 db.previously_seen_video, chat_id,
                 update.message.video_note.file_id, update.message.message_id)
@@ -120,6 +120,7 @@ def build_application(settings,db):
                 await update.message.reply_text(
                     '♻️ Этот кружок уже присылали в чат. Повторные видео не засчитываются — запиши новый кружок!')
                 return
+        if settings.pushup_analysis_enabled:
             attempt = await asyncio.to_thread(
                 db.enqueue_pushup_attempt,chat_id,user.id,day,
                 update.message.message_id,update.message.video_note.file_id)
