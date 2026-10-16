@@ -1,5 +1,8 @@
 import asyncio
 import hashlib
+import json
+import signal
+import sys
 import logging
 import os
 import tempfile
@@ -39,6 +42,51 @@ async def _sample_memory(attempt_id, readings):
 
 
 
+
+async def _isolated_pose_analysis(video_path, attempt_id, timeout=120):
+    """Run one CPU-heavy video in a separate process, reaping it even on timeout."""
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, '-m', 'app.pose_subprocess', video_path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        start_new_session=True)
+    peak_child_mb = 0.0
+    async def monitor():
+        nonlocal peak_child_mb
+        while proc.returncode is None:
+            try:
+                with open(f'/proc/{proc.pid}/status', encoding='utf-8') as f:
+                    for line in f:
+                        if line.startswith('VmRSS:'):
+                            peak_child_mb = max(peak_child_mb, int(line.split()[1])/1024)
+                            break
+            except (OSError, ValueError, IndexError):
+                pass
+            await asyncio.sleep(.5)
+    task = asyncio.create_task(monitor())
+    try:
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f'Pose analyzer exceeded {timeout}s') from exc
+        if proc.returncode:
+            raise RuntimeError(f'Pose analyzer exited {proc.returncode}: {stderr.decode(errors="replace")[-1200:]}')
+        return json.loads(stdout)
+    finally:
+        if proc.returncode is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        logger.info('Pushup isolated child attempt=%s child_peak_rss_mb=%.1f child_exit=%s',
+                    attempt_id, peak_child_mb, proc.returncode)
+
+
 async def process_attempt(application, settings, db, attempt):
     attempt_id = attempt['id']
     chat_id = attempt['chat_id']
@@ -64,8 +112,7 @@ async def process_attempt(application, settings, db, attempt):
         media_size = os.path.getsize(temp_path)
 
         analysis_started = time.monotonic()
-        metrics = await asyncio.to_thread(
-            analyze_pose_visibility, temp_path, 6.0, analyze_world_landmarks)
+        metrics = await _isolated_pose_analysis(temp_path, attempt_id)
         logger.info('Pushup analysis finished attempt=%s analysis_sec=%.2f rss_mb=%.1f', attempt_id, time.monotonic()-analysis_started, _memory_mb()[0])
         world = metrics['world_geometry']
         classification = classify_pushup_attempt(metrics)
