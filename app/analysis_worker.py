@@ -16,6 +16,28 @@ from app.world_pose_analysis import analyze_world_landmarks
 
 logger = logging.getLogger(__name__)
 
+def _memory_mb():
+    """Linux process RSS and high-water RSS; no additional dependencies."""
+    try:
+        with open('/proc/self/status', encoding='utf-8') as f:
+            fields = {}
+            for line in f:
+                if line.startswith(('VmRSS:', 'VmHWM:')):
+                    key, value = line.split(':', 1)
+                    fields[key] = round(int(value.strip().split()[0]) / 1024, 1)
+            return fields.get('VmRSS', 0), fields.get('VmHWM', 0)
+    except (OSError, ValueError, IndexError):
+        return 0, 0
+
+
+async def _sample_memory(attempt_id, readings):
+    while True:
+        rss, hwm = _memory_mb()
+        readings.append(rss)
+        logger.info('Pushup resource sample attempt=%s rss_mb=%.1f hwm_mb=%.1f', attempt_id, rss, hwm)
+        await asyncio.sleep(1)
+
+
 
 async def process_attempt(application, settings, db, attempt):
     attempt_id = attempt['id']
@@ -25,6 +47,10 @@ async def process_attempt(application, settings, db, attempt):
     day = attempt['report_date']
     temp_path = None
     started = time.monotonic()
+    rss_start, _ = _memory_mb()
+    readings = []
+    sampler = asyncio.create_task(_sample_memory(attempt_id, readings))
+    logger.info('Pushup resource start attempt=%s rss_mb=%.1f', attempt_id, rss_start)
     try:
         telegram_file = await application.bot.get_file(attempt['telegram_file_id'])
         with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4', delete=False) as f:
@@ -37,8 +63,10 @@ async def process_attempt(application, settings, db, attempt):
             media_digest = hashlib.sha256(video_file.read()).hexdigest()
         media_size = os.path.getsize(temp_path)
 
+        analysis_started = time.monotonic()
         metrics = await asyncio.to_thread(
             analyze_pose_visibility, temp_path, 6.0, analyze_world_landmarks)
+        logger.info('Pushup analysis finished attempt=%s analysis_sec=%.2f rss_mb=%.1f', attempt_id, time.monotonic()-analysis_started, _memory_mb()[0])
         world = metrics['world_geometry']
         classification = classify_pushup_attempt(metrics)
         status = classification['status']
@@ -143,6 +171,13 @@ async def process_attempt(application, settings, db, attempt):
             log_exception(logger,'Push-up queue failure update failed',db_exc,settings)
         log_exception(logger,'Push-up queue processing failed',exc,settings)
     finally:
+        sampler.cancel()
+        try:
+            await sampler
+        except asyncio.CancelledError:
+            pass
+        rss_end, hwm = _memory_mb()
+        logger.info('Pushup resource end attempt=%s duration_sec=%.2f rss_start_mb=%.1f rss_end_mb=%.1f rss_sample_peak_mb=%.1f process_hwm_mb=%.1f', attempt_id, time.monotonic()-started, rss_start, rss_end, max(readings, default=0), hwm)
         if temp_path:
             try: os.remove(temp_path)
             except FileNotFoundError: pass
