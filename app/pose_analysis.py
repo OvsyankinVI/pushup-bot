@@ -294,7 +294,16 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                 if not ok:break
                 idx=total;total+=1
                 if idx%every_n:continue
-                sampled+=1;result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),int(idx*1000/source_fps))
+                sampled+=1
+                # Staging experiment: cap the longest frame edge before pose inference.
+                # Preserve aspect ratio and frame timestamps; landmark coordinates
+                # remain normalized, so downstream counting logic is unchanged.
+                height, width = frame.shape[:2]
+                if max(height, width) > 640:
+                    scale = 640 / max(height, width)
+                    frame = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=rgb),int(idx*1000/source_fps))
                 if world_result_consumer is not None: world_results.append(result.pose_world_landmarks[0] if result.pose_world_landmarks else None)
                 if not result.pose_landmarks:
                     for v in signals.values():v.append(None)
