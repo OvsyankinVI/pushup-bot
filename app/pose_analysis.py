@@ -277,6 +277,14 @@ def _simple_head_counter(values, fps):
             'coverage':round(len(valid)/len(smooth),3),'timestamps':timestamps,'mode':'diagnostic_only'}
 
 
+# Compact, slot-based world landmarks: avoid retaining MediaPipe's full
+# per-frame landmark objects throughout video processing.
+from collections import namedtuple
+
+_CompactLandmark = namedtuple('_CompactLandmark', 'x y z visibility')
+_WORLD_JOINT_INDICES = (11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28)
+
+
 def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_consumer=None)->dict:
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
@@ -295,16 +303,14 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                 idx=total;total+=1
                 if idx%every_n:continue
                 sampled+=1
-                # Staging experiment: cap the longest frame edge before pose inference.
-                # Preserve aspect ratio and frame timestamps; landmark coordinates
-                # remain normalized, so downstream counting logic is unchanged.
-                height, width = frame.shape[:2]
-                if max(height, width) > 640:
-                    scale = 640 / max(height, width)
-                    frame = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))), interpolation=cv2.INTER_AREA)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=rgb),int(idx*1000/source_fps))
-                if world_result_consumer is not None: world_results.append(result.pose_world_landmarks[0] if result.pose_world_landmarks else None)
+                result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),int(idx*1000/source_fps))
+                if world_result_consumer is not None:
+                    # Retain only the world joints used by the downstream
+                    # classifier instead of every MediaPipe landmark object.
+                    world = result.pose_world_landmarks[0] if result.pose_world_landmarks else None
+                    world_results.append(
+                        {i: _CompactLandmark(world[i].x, world[i].y, world[i].z, world[i].visibility)
+                         for i in _WORLD_JOINT_INDICES} if world else None)
                 if not result.pose_landmarks:
                     for v in signals.values():v.append(None)
                     continue
