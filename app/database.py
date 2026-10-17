@@ -173,6 +173,25 @@ class Database:
             totals[user_id] = totals.get(user_id, 0) + (int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0))
         return totals
 
+    def manual_totals(self, chat_id: int, start: date, end: date | None = None) -> dict[int, int]:
+        """Manual additions by participant for a day or date interval."""
+        end = end or start
+        totals = {}
+        offset = 0
+        while True:
+            rows = (self.client.table(self.attempt_table)
+                    .select('telegram_user_id,manual_adjustment')
+                    .eq('chat_id', chat_id).eq('status', 'accepted')
+                    .gte('report_date', start.isoformat()).lte('report_date', end.isoformat())
+                    .order('id').range(offset, offset + 499).execute().data)
+            for row in rows:
+                uid = int(row['telegram_user_id'])
+                totals[uid] = totals.get(uid, 0) + int(row.get('manual_adjustment') or 0)
+            if len(rows) < 500:
+                break
+            offset += 500
+        return totals
+
     def result_replies_enabled(self, chat_id: int) -> bool:
         rows = (self.client.table('chat_settings')
                 .select('pushup_result_replies_enabled').eq('chat_id', chat_id)
