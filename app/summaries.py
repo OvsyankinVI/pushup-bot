@@ -62,7 +62,8 @@ def promotion_message(before: int | None, after: int | None) -> str | None:
 
 
 def format_summary(members: list[dict], reported: set[int], report_date: date,
-                   kind: str = 'today', pushup_totals: dict[int, int] | None = None) -> str:
+                   kind: str = 'today', pushup_totals: dict[int, int] | None = None,
+                   manual_totals: dict[int, int] | None = None) -> str:
     titles = {
         'today': '🏋️ Сегодня',
         'evening': '🏋️ Промежуточная сводка',
@@ -71,16 +72,19 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     lines = [titles[kind], '']
     totals = pushup_totals or {}
     ranking = leaderboard(members, totals)
+    manual_totals = manual_totals or {}
     if not members:
         lines.append('Пока нет активных участников. Зарегистрируйтесь через /join.')
     for member, score, place in ranking:
         icon = MEDALS[place - 1] if place is not None and place <= 3 else ('✅' if score else '❌')
-        suffix = f' — {score} отж.' if score else ''
+        manual = manual_totals.get(member['telegram_user_id'], 0)
+        suffix = f' — {score-manual} (+{manual}) отж.' if manual else (f' — {score} отж.' if score else '')
         lines.append(f"{icon} {member['display_name']}{suffix}")
     completed = sum(score > 0 for _, score, _ in ranking)
     total = sum(score for _, score, _ in ranking)
+    manual_sum = sum(manual_totals.get(m['telegram_user_id'], 0) for m in members)
     lines.extend(['', f'Отжались: {completed}/{len(members)}',
-                  f'🏋️ Всего отжиманий: {total}'])
+                  f'🏋️ Всего отжиманий: {total-manual_sum} (+{manual_sum}) = {total}' if manual_sum else f'🏋️ Всего отжиманий: {total}'])
     # Penalty reminders retain the original video-submission criterion.
     if kind != 'today' and len(reported.intersection(
             {member['telegram_user_id'] for member in members})) < len(members):
@@ -89,17 +93,22 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     return '\n'.join(lines)
 
 
-def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date) -> str:
+def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date,
+                   manual_totals: dict[int, int] | None = None) -> str:
+    manual_totals = manual_totals or {}
     end = week_start + timedelta(days=6)
     lines = [f'🏆 Итоги недели {week_start:%d.%m}–{end:%d.%m}', '']
     for member, score, place in leaderboard(members, totals):
         if not score:
             continue
         icon = MEDALS[place - 1] if place <= 3 else '✅'
-        lines.append(f"{icon} {member['display_name']} — {score} отж.")
+        manual = manual_totals.get(member['telegram_user_id'], 0)
+        lines.append(f"{icon} {member['display_name']} — {score-manual} (+{manual}) отж." if manual else f"{icon} {member['display_name']} — {score} отж.")
     if len(lines) == 2:
         lines.append('Пока нет засчитанных отжиманий.')
-    lines.extend(['', f'🏋️ Всего за неделю: {sum(max(0, int(v)) for v in totals.values())}'])
+    week_total = sum(max(0, int(v)) for v in totals.values())
+    week_manual = sum(manual_totals.values())
+    lines.extend(['', f'🏋️ Всего за неделю: {week_total-week_manual} (+{week_manual}) = {week_total}' if week_manual else f'🏋️ Всего за неделю: {week_total}'])
     return '\n'.join(lines)
 
 
