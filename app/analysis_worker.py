@@ -143,7 +143,9 @@ async def process_attempt(application, settings, db, attempt):
                 db.daily_pushup_total, chat_id, user_id,
                 date.fromisoformat(day))
             if status == 'accepted':
-                text = f"✅ Засчитано: {count} отж.\n📊 Всего за сегодня: {total}"
+                manual = await asyncio.to_thread(db.manual_totals, chat_id, date.fromisoformat(day))
+                extra = manual.get(user_id, 0)
+                text = f"✅ Засчитано: {count} отж.\n📊 Всего за сегодня: {total-extra} (+{extra}) = {total}" if extra else f"✅ Засчитано: {count} отж.\n📊 Всего за сегодня: {total}"
             elif status == 'rejected':
                 text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
