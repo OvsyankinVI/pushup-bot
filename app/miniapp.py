@@ -3,11 +3,12 @@ import hashlib
 import hmac
 import json
 import time
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from urllib.parse import parse_qsl
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, Query
 from fastapi.responses import FileResponse
 from app.summaries import today_moscow
 
@@ -33,7 +34,7 @@ def telegram_user(raw, token):
         raise HTTPException(401, 'Открой приложение через Telegram') from None
 
 @router.get('/api/miniapp')
-async def data(request: Request, authorization: str | None = Header(None)):
+async def data(request: Request, authorization: str | None = Header(None), selected_date: str | None = Query(None)):
     raw = (authorization or '').removeprefix('tma ').strip()
     if not raw or len(raw)>8192:
         raise HTTPException(401,'Открой приложение через Telegram')
@@ -43,11 +44,26 @@ async def data(request: Request, authorization: str | None = Header(None)):
         raise HTTPException(503,'Не настроен чат Отжиматора')
     db = request.app.state.db
     day = today_moscow()
+    try:
+        chosen = date.fromisoformat(selected_date) if selected_date else day
+    except ValueError:
+        raise HTTPException(400, 'Неверная дата') from None
+    if chosen > day:
+        raise HTTPException(400, 'Нельзя выбрать будущую дату')
     def load():
         members, reported, today = db.summary_data(chat_id,day)
         member = next((m for m in members if int(m['telegram_user_id'])==user_id),None)
         if member is None:
             return None
+        attempts = (db.client.table('pushup_attempts')
+                    .select('id,pushup_count,created_at,processed_at')
+                    .eq('chat_id',chat_id).eq('telegram_user_id',user_id)
+                    .eq('report_date',chosen.isoformat()).eq('status','accepted')
+                    .order('created_at').execute().data)
+        # Telegram submission time, converted to Moscow time for display.
+        for attempt in attempts:
+            stamp = attempt.get('created_at')
+            attempt['time'] = datetime.fromisoformat(stamp.replace('Z','+00:00')).astimezone(ZoneInfo('Europe/Moscow')).strftime('%H:%M') if stamp else '—'
         week = db.weekly_pushup_totals(chat_id,day-timedelta(days=day.weekday()))
         stats = db.personal_stats(chat_id,user_id,day)
         totals = {}
@@ -71,7 +87,7 @@ async def data(request: Request, authorization: str | None = Header(None)):
             if len(rows)<500: break
             offset+=500
         return {'user':{'id':user_id,'name':member['display_name'],'username':member.get('username')},
-                'date':day.isoformat(),'members':[{'id':int(m['telegram_user_id']),
+                'date':day.isoformat(),'selected_date':chosen.isoformat(),'attempts':attempts,'selected_total':sum(max(0,int(a.get('pushup_count') or 0)) for a in attempts),'members':[{'id':int(m['telegram_user_id']),
                 'name':m['display_name'],'reported':int(m['telegram_user_id']) in reported}
                 for m in members],'today':today,'week':week,'month':monthly,'all':totals,'stats':stats,'daily':daily}
     result=await asyncio.to_thread(load)
