@@ -182,15 +182,16 @@ async def adjust(request: Request, authorization: str | None = Header(None)):
         name = (member or {}).get('display_name') or str(user_id)
         bot_count = int(row['bot_count'])
         day = row['report_day']
+        text = (f"✏️ {name} изменил(а) корректировку подхода за {day}\n"
+                f"🤖 Бот: {bot_count} отж.\n"
+                f"📝 Вручную: +{previous} → +{adjustment}\n"
+                f"💪 Теперь: {bot_count} (+{adjustment}) = {bot_count + adjustment}")
         try:
             await request.app.state.telegram.bot.send_message(
-                chat_id=chat_id,
-                text=(f"✏️ {name} изменил(а) корректировку подхода за {day}\n"
-                      f"🤖 Бот: {bot_count} отж.\n"
-                      f"📝 Вручную: +{previous} → +{adjustment}\n"
-                      f"💪 Теперь: {bot_count} (+{adjustment}) = {bot_count + adjustment}"),
-                reply_to_message_id=int(row['telegram_message'])
-            )
+                chat_id=chat_id, text=text, reply_to_message_id=int(row['telegram_message']))
         except Exception:
-            notified = False
+            try:
+                await request.app.state.telegram.bot.send_message(chat_id=chat_id, text=text)
+            except Exception:
+                notified = False
     return {'ok': True, 'notified': notified, 'manual_adjustment': adjustment}
