@@ -102,20 +102,20 @@ class Database:
                 .execute().data)
 
     def daily_pushup_total(self, chat_id: int, user_id: int, day: date) -> int:
-        rows=(self.client.table(self.attempt_table).select('pushup_count')
+        rows=(self.client.table(self.attempt_table).select('pushup_count,manual_adjustment')
               .eq('chat_id',chat_id).eq('telegram_user_id',user_id)
               .eq('report_date',day.isoformat()).eq('status','accepted').execute().data)
-        return sum(int(row.get('pushup_count') or 0) for row in rows)
+        return sum((int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0)) for row in rows)
 
     def pushup_totals(self, chat_id: int, day: date) -> dict[int, int]:
         rows = (self.client.table(self.attempt_table)
-                .select('telegram_user_id,pushup_count')
+                .select('telegram_user_id,pushup_count,manual_adjustment')
                 .eq('chat_id', chat_id).eq('report_date', day.isoformat())
                 .eq('status', 'accepted').execute().data)
         totals = {}
         for row in rows:
             user_id = row['telegram_user_id']
-            totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
+            totals[user_id] = totals.get(user_id, 0) + (int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0))
         return totals
 
     def personal_stats(self, chat_id: int, user_id: int, today: date) -> dict:
@@ -129,13 +129,13 @@ class Database:
         batch_size = 500
         while True:
             rows = (self.client.table(self.attempt_table)
-                    .select('report_date,pushup_count')
+                    .select('report_date,pushup_count,manual_adjustment')
                     .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
                     .eq('status', 'accepted')
                     .order('id').range(offset, offset + batch_size - 1)
                     .execute().data)
             for row in rows:
-                score = max(0, int(row.get('pushup_count') or 0))
+                score = max(0, (int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0)))
                 day = date.fromisoformat(row['report_date'])
                 week_start = day - timedelta(days=day.weekday())
                 weekly[week_start] += score
@@ -153,24 +153,24 @@ class Database:
         }
 
     def personal_best(self, chat_id: int, user_id: int) -> int:
-        rows = (self.client.table(self.attempt_table).select('pushup_count')
+        rows = (self.client.table(self.attempt_table).select('pushup_count,manual_adjustment')
                 .eq('chat_id', chat_id).eq('telegram_user_id', user_id)
                 .eq('status', 'accepted').order('pushup_count', desc=True)
-                .limit(1).execute().data)
-        return max(0, int(rows[0].get('pushup_count') or 0)) if rows else 0
+                .limit(500).execute().data)
+        return max((int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0) for row in rows), default=0)
 
     def weekly_pushup_totals(self, chat_id: int, week_start: date) -> dict[int, int]:
         from datetime import timedelta
         week_end = week_start + timedelta(days=6)
         rows = (self.client.table(self.attempt_table)
-                .select('telegram_user_id,pushup_count')
+                .select('telegram_user_id,pushup_count,manual_adjustment')
                 .eq('chat_id', chat_id).gte('report_date', week_start.isoformat())
                 .lte('report_date', week_end.isoformat())
                 .eq('status', 'accepted').execute().data)
         totals = {}
         for row in rows:
             user_id = row['telegram_user_id']
-            totals[user_id] = totals.get(user_id, 0) + int(row.get('pushup_count') or 0)
+            totals[user_id] = totals.get(user_id, 0) + (int(row.get('pushup_count') or 0) + int(row.get('manual_adjustment') or 0))
         return totals
 
     def result_replies_enabled(self, chat_id: int) -> bool:
