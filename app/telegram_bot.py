@@ -49,7 +49,7 @@ def build_application(settings,db):
         rows=await asyncio.to_thread(db.members,update.effective_chat.id);text=('👥 Участники:\n\n'+'\n'.join(f"• {m['display_name']}" for m in rows)+f'\n\nВсего: {len(rows)}') if rows else 'Участников пока нет. Используйте /join.';await update.message.reply_text(text)
     async def today(update,context):
         if not await group_only(update):return
-        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals))
+        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual))
     async def week(update,context):
         if not await group_only(update):return
         day=today_moscow()
@@ -57,7 +57,8 @@ def build_application(settings,db):
         start=day-timedelta(days=day.weekday())
         members=await asyncio.to_thread(db.members,update.effective_chat.id)
         totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
-        await update.message.reply_text(weekly_summary(members,totals,start))
+        manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,start,start+timedelta(days=6))
+        await update.message.reply_text(weekly_summary(members,totals,start,manual))
     async def stats(update, context):
         if not await group_only(update):return
         user = update.effective_user
