@@ -5,6 +5,8 @@ import os
 import tempfile
 import json
 import sys
+import time
+from datetime import datetime, timezone
 from datetime import timedelta
 from app.summaries import today_moscow
 
@@ -33,6 +35,7 @@ async def _archive_one(bot, db, attempt):
                 db.client.storage.from_(BUCKET).upload(
                     path, source, {'content-type': 'video/mp4', 'upsert': 'true'})
             _set_status(db, aid, 'ready', path)
+            db.client.table(db.attempt_table).update({'overlay_queued_at':datetime.now(timezone.utc).isoformat()}).eq('id',aid).is_('overlay_queued_at','null').execute()
         await asyncio.to_thread(upload)
     except Exception:
         logger.exception('Staging video archive failed attempt=%s', aid)
@@ -97,6 +100,12 @@ def _render_overlay(db, row):
         db.client.table(db.attempt_table).update({'overlay_video_status':'unavailable'}).eq('id',aid).execute()
         return
     import subprocess
+    started=datetime.now(timezone.utc)
+    start_clock=time.monotonic()
+    db.client.table(db.attempt_table).update({
+        'overlay_started_at':started.isoformat(),
+        'overlay_error':None
+    }).eq('id',aid).execute()
     with tempfile.TemporaryDirectory(prefix='overlay_') as folder:
         src=os.path.join(folder,'original.mp4')
         dst=os.path.join(folder,'annotated.mp4')
@@ -113,7 +122,9 @@ def _render_overlay(db, row):
         with open(dst,'rb') as f:
             db.client.storage.from_(BUCKET).upload(target,f,{'content-type':'video/mp4','upsert':'true'})
         db.client.table(db.attempt_table).update({
-            'overlay_video_path':target,'overlay_video_status':'ready'
+            'overlay_video_path':target,'overlay_video_status':'ready',
+            'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
+            'overlay_render_seconds':round(time.monotonic()-start_clock,3)
         }).eq('id',aid).execute()
         logger.info('Staging overlay complete attempt=%s result=%s',aid,proc.stdout.strip())
 
@@ -126,7 +137,9 @@ async def _process_overlay(db, cutoff):
         except Exception:
             logger.exception('Staging overlay render failed attempt=%s',row['id'])
             await asyncio.to_thread(lambda: db.client.table(db.attempt_table).update({
-                'overlay_video_status':'failed'
+                'overlay_video_status':'failed',
+                'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
+                'overlay_error':'render_failed_see_logs'
             }).eq('id',row['id']).execute())
 
 
