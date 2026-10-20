@@ -248,13 +248,22 @@ async def process_attempt(application, settings, db, attempt):
             except OSError as exc: log_exception(logger,'Temporary video cleanup failed',exc,settings)
 
 
-async def worker_loop(application, settings, db):
+async def worker_loop(application, settings, db, analysis_lock=None):
     while True:
         try:
-            attempt = await asyncio.to_thread(db.claim_next_pushup_attempt)
-            if attempt:
-                await process_attempt(application,settings,db,attempt)
-                continue
+            # Shared lock prevents overlay rendering while recognition is running.
+            if analysis_lock is None:
+                attempt = await asyncio.to_thread(db.claim_next_pushup_attempt)
+                if attempt:
+                    await process_attempt(application,settings,db,attempt)
+                    continue
+            else:
+                async with analysis_lock:
+                    attempt = await asyncio.to_thread(db.claim_next_pushup_attempt)
+                    if attempt:
+                        await process_attempt(application,settings,db,attempt)
+                if attempt:
+                    continue
         except asyncio.CancelledError:
             raise
         except Exception as exc:
