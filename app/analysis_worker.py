@@ -10,7 +10,6 @@ import time
 from datetime import date, datetime, timezone
 
 from app.admin_alerts import send_admin_alert
-from app.pushup_diagnostics import format_diagnostics
 from app.pushup_classification import classify_pushup_attempt
 from app.summaries import rank_for_user, promotion_message, rival_challenge, overtaken_message
 from app.safe_logging import log_exception
@@ -186,16 +185,8 @@ async def process_attempt(application, settings, db, attempt):
             if target:
                 reward_notices.append(target)
 
-        if settings.pushup_diagnostics_enabled and chat_id == settings.telegram_chat_id:
-            report = format_diagnostics(attempt_id, message_id, metrics, classification, time.monotonic()-started)
-            for chunk in report:
-                await application.bot.send_message(chat_id=chat_id, text=chunk, reply_to_message_id=message_id)
-            notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
-            if notices:
-                await application.bot.send_message(chat_id=chat_id, text='\n'.join(notices), reply_to_message_id=message_id)
-
         replies_enabled = await asyncio.to_thread(db.result_replies_enabled, chat_id)
-        if settings.pushup_results_enabled and replies_enabled and not settings.pushup_diagnostics_enabled:
+        if settings.pushup_results_enabled and replies_enabled:
             total = await asyncio.to_thread(
                 db.daily_pushup_total, chat_id, user_id,
                 date.fromisoformat(day))
