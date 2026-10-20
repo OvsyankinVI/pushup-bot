@@ -10,9 +10,19 @@ from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, Header, HTTPException, Request, Query
 from fastapi.responses import FileResponse
+BUCKET = 'pushup-production-media'
 from app.summaries import today_moscow
 
 router = APIRouter()
+
+
+@router.get('/miniapp/assets/{asset_name}')
+async def miniapp_asset(asset_name: str):
+    allowed = {'medals.svg', 'pushup-athlete.svg', 'character-light.webp', 'character-dark.webp', 'medal-gold.webp', 'medal-silver.webp', 'medal-bronze.webp', 'crown.webp'}
+    if asset_name not in allowed:
+        raise HTTPException(404, 'Asset not found')
+    asset_path = Path(__file__).resolve().parent.parent / 'miniapp' / 'assets' / asset_name
+    return FileResponse(asset_path, media_type='image/webp' if asset_name.endswith('.webp') else 'image/svg+xml', headers={'Cache-Control': 'public, max-age=3600'})
 
 @router.get('/miniapp')
 async def page():
@@ -76,7 +86,7 @@ async def data(request: Request, authorization: str | None = Header(None),
         offset = 0
         while True:
             batch = (db.client.table('pushup_attempts')
-                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at')
+                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status')
                      .eq('chat_id', chat_id).eq('status', 'accepted')
                      .order('id').range(offset, offset + 499).execute().data)
             rows.extend(batch)
@@ -113,11 +123,34 @@ async def data(request: Request, authorization: str | None = Header(None),
                 week_start = d - timedelta(days=d.weekday())
                 weeks[week_start] += n + extra
                 best_single = max(best_single, n + extra)
+        photo_rows = (db.client.table('member_photos').select('telegram_user_id,storage_path')
+                      .eq('chat_id', chat_id).execute().data)
+        photo_urls = {}
+        for item in photo_rows:
+            try:
+                signed = db.client.storage.from_(BUCKET).create_signed_url(item['storage_path'], 3600)
+                photo_urls[str(item['telegram_user_id'])] = signed.get('signedURL') or signed.get('signedUrl')
+            except Exception:
+                pass
         def attempts_for(uid):
             return [format_attempt(dict(a)) for a in rows
                     if int(a['telegram_user_id']) == uid and a['report_date'] == chosen.isoformat()]
-        own_attempts = attempts_for(user_id)
-        viewed_attempts = attempts_for(viewed_id)
+        def video_links(items):
+            for a in items:
+                if a['report_date'] < (day - timedelta(days=4)).isoformat():
+                    a['video_status'] = 'expired'
+                elif a.get('video_status') == 'ready' and a.get('video_storage_path'):
+                    try:
+                        signed = db.client.storage.from_(BUCKET).create_signed_url(a['video_storage_path'], 900)
+                        a['video_url'] = signed.get('signedURL') or signed.get('signedUrl')
+                        if not a['video_url']:
+                            a['video_status'] = 'failed'
+                    except Exception:
+                        a['video_status'] = 'failed'
+                a.pop('video_storage_path', None)
+            return items
+        own_attempts = video_links(attempts_for(user_id))
+        viewed_attempts = video_links(attempts_for(viewed_id))
         return {
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
@@ -125,6 +158,7 @@ async def data(request: Request, authorization: str | None = Header(None),
             'attempts': own_attempts, 'viewed_attempts': viewed_attempts, 'viewed_id': viewed_id,
             'selected_total': base_selected[user_id] + manual_selected[user_id],
             'selected_base': base_selected[user_id], 'selected_manual': manual_selected[user_id],
+            'photo_urls': photo_urls,
             'members': [{'id': int(m['telegram_user_id']), 'name': m['display_name'],
                          'reported': int(m['telegram_user_id']) in reported} for m in members],
             'today': dict(base_selected), 'today_manual': dict(manual_selected),
@@ -139,7 +173,7 @@ async def data(request: Request, authorization: str | None = Header(None),
 
     result = await asyncio.to_thread(load)
     if result is None:
-        raise HTTPException(403, 'Сначала зарегистрируйся в чате с Отжиматором через /join')
+        raise HTTPException(403, 'Сначала зарегистрируйся в чате через /join')
     return result
 
 
@@ -195,3 +229,44 @@ async def adjust(request: Request, authorization: str | None = Header(None)):
             except Exception:
                 notified = False
     return {'ok': True, 'notified': notified, 'manual_adjustment': adjustment}
+
+
+@router.put('/api/miniapp/avatar')
+async def upload_avatar(request: Request, authorization: str | None = Header(None)):
+    uid, chat_id, db = authenticate(request, authorization)
+    mime = request.headers.get('content-type', '').split(';')[0].strip().lower()
+    if mime not in ('image/jpeg', 'image/png', 'image/webp'):
+        raise HTTPException(415, 'Используй JPG, PNG или WebP')
+    if request.headers.get('content-length') and int(request.headers['content-length']) > 2_000_000:
+        raise HTTPException(413, 'Фото должно быть меньше 2 МБ')
+    payload = await request.body()
+    if not payload or len(payload) > 2_000_000:
+        raise HTTPException(413, 'Фото должно быть меньше 2 МБ')
+    if not (payload.startswith(b'\xff\xd8\xff') if mime == 'image/jpeg' else
+            payload.startswith(b'\x89PNG\r\n\x1a\n') if mime == 'image/png' else
+            payload.startswith(b'RIFF') and payload[8:12] == b'WEBP'):
+        raise HTTPException(400, 'Неверный формат изображения')
+    def save():
+        if not db.member(chat_id, uid):
+            raise ValueError('Участник не найден')
+        suffix = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}[mime]
+        path = f'avatars/{chat_id}/{uid}/{int(time.time()*1000)}.{suffix}'
+        db.client.storage.from_(BUCKET).upload(path, payload, {'content-type': mime})
+        old = (db.client.table('member_photos').select('storage_path')
+               .eq('chat_id', chat_id).eq('telegram_user_id', uid).limit(1).execute().data)
+        db.client.table('member_photos').upsert({
+            'chat_id': chat_id, 'telegram_user_id': uid, 'storage_path': path,
+            'updated_at': datetime.now(ZoneInfo('UTC')).isoformat()
+        }, on_conflict='chat_id,telegram_user_id').execute()
+        if old and old[0]['storage_path'] != path:
+            try:
+                db.client.storage.from_(BUCKET).remove([old[0]['storage_path']])
+            except Exception:
+                pass
+        signed = db.client.storage.from_(BUCKET).create_signed_url(path, 3600)
+        return signed.get('signedURL') or signed.get('signedUrl')
+    try:
+        url = await asyncio.to_thread(save)
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from None
+    return {'ok': True, 'photo_url': url}
