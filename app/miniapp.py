@@ -18,7 +18,7 @@ router = APIRouter()
 
 @router.get('/miniapp/assets/{asset_name}')
 async def miniapp_asset(asset_name: str):
-    allowed = {'medals.svg', 'pushup-athlete.svg'}
+    allowed = {'medals.svg', 'pushup-athlete.svg', 'character-light.webp', 'character-dark.webp', 'medal-gold.webp', 'medal-silver.webp', 'medal-bronze.webp', 'crown.webp'}
     if asset_name not in allowed:
         raise HTTPException(404, 'Asset not found')
     asset_path = Path(__file__).resolve().parent.parent / 'miniapp' / 'assets' / asset_name
