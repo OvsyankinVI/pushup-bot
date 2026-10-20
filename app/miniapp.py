@@ -86,7 +86,7 @@ async def data(request: Request, authorization: str | None = Header(None),
         offset = 0
         while True:
             batch = (db.client.table(db.attempt_table)
-                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status')
+                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status,overlay_video_path,overlay_video_status')
                      .eq('chat_id', chat_id).eq('status', 'accepted')
                      .order('id').range(offset, offset + 499).execute().data)
             rows.extend(batch)
@@ -141,13 +141,16 @@ async def data(request: Request, authorization: str | None = Header(None),
                     a['video_status'] = 'expired'
                 elif a.get('video_status') == 'ready' and a.get('video_storage_path'):
                     try:
-                        signed = db.client.storage.from_(BUCKET).create_signed_url(a['video_storage_path'], 900)
+                        video_path = (a.get('overlay_video_path') if a.get('overlay_video_status') == 'ready' else None) or a['video_storage_path']
+                        signed = db.client.storage.from_(BUCKET).create_signed_url(video_path, 900)
+                        a['video_annotated'] = video_path != a['video_storage_path']
                         a['video_url'] = signed.get('signedURL') or signed.get('signedUrl')
                         if not a['video_url']:
                             a['video_status'] = 'failed'
                     except Exception:
                         a['video_status'] = 'failed'
                 a.pop('video_storage_path', None)
+                a.pop('overlay_video_path', None)
             return items
         own_attempts = video_links(attempts_for(user_id))
         viewed_attempts = video_links(attempts_for(viewed_id))
