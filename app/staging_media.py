@@ -119,8 +119,18 @@ def _render_overlay(db, row):
         if not os.path.isfile(dst) or os.path.getsize(dst)==0:
             raise RuntimeError('Empty annotated video')
         target=f"annotated/{aid}.mp4"
-        with open(dst,'rb') as f:
-            db.client.storage.from_(BUCKET).upload(target,f,{'content-type':'video/mp4','upsert':'true'})
+        # Transient HTTP/2 transport errors must not permanently lose an overlay.
+        for upload_attempt in range(1, 4):
+            try:
+                with open(dst, 'rb') as f:
+                    db.client.storage.from_(BUCKET).upload(
+                        target, f, {'content-type': 'video/mp4', 'upsert': 'true'})
+                break
+            except Exception:
+                if upload_attempt == 3:
+                    raise
+                logger.warning('Staging overlay upload retry attempt=%s try=%s', aid, upload_attempt, exc_info=True)
+                time.sleep(2 * upload_attempt)
         db.client.table(db.attempt_table).update({
             'overlay_video_path':target,'overlay_video_status':'ready',
             'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
