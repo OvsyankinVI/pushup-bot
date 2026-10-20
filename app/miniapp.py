@@ -15,6 +15,15 @@ from app.summaries import today_moscow
 
 router = APIRouter()
 
+
+@router.get('/miniapp/assets/{asset_name}')
+async def miniapp_asset(asset_name: str):
+    allowed = {'medals.svg', 'pushup-athlete.svg'}
+    if asset_name not in allowed:
+        raise HTTPException(404, 'Asset not found')
+    asset_path = Path(__file__).resolve().parent.parent / 'miniapp' / 'assets' / asset_name
+    return FileResponse(asset_path, media_type='image/svg+xml', headers={'Cache-Control': 'public, max-age=3600'})
+
 @router.get('/miniapp')
 async def page():
     return FileResponse(Path(__file__).resolve().parent.parent / 'miniapp' / 'index.html', headers={'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'Pragma': 'no-cache', 'Expires': '0'})
