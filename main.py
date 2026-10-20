@@ -37,10 +37,11 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
-            media_task = asyncio.create_task(media_loop(telegram.bot, db)) if settings.pushup_diagnostics_enabled else None
+            analysis_lock = asyncio.Lock() if settings.pushup_diagnostics_enabled else None
+            media_task = asyncio.create_task(media_loop(telegram.bot, db, analysis_lock)) if settings.pushup_diagnostics_enabled else None
             worker_task = None
             if settings.pushup_analysis_enabled:
-                worker_task = asyncio.create_task(worker_loop(telegram, settings, db))
+                worker_task = asyncio.create_task(worker_loop(telegram, settings, db, analysis_lock))
             try:
                 yield
             finally:
