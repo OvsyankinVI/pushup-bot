@@ -231,8 +231,8 @@ async def upload_avatar(request: Request, authorization: str | None = Header(Non
     payload = await request.body()
     if not payload or len(payload) > 2_000_000:
         raise HTTPException(413, 'Фото должно быть меньше 2 МБ')
-    if not (payload.startswith(b'\\xff\\xd8\\xff') if mime == 'image/jpeg' else
-            payload.startswith(b'\\x89PNG\\r\\n\\x1a\\n') if mime == 'image/png' else
+    if not (payload.startswith(b'\xff\xd8\xff') if mime == 'image/jpeg' else
+            payload.startswith(b'\x89PNG\r\n\x1a\n') if mime == 'image/png' else
             payload.startswith(b'RIFF') and payload[8:12] == b'WEBP'):
         raise HTTPException(400, 'Неверный формат изображения')
     def save():
