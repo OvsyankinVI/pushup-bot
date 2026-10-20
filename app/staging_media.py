@@ -154,13 +154,38 @@ async def _process_overlay(db, cutoff, analysis_lock=None):
                     await asyncio.to_thread(_render_overlay,db,row)
             else:
                 return
-        except Exception:
-            logger.exception('Staging overlay render failed attempt=%s',row['id'])
-            await asyncio.to_thread(lambda: db.client.table(db.attempt_table).update({
-                'overlay_video_status':'failed',
-                'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
-                'overlay_error':'render_failed_see_logs'
-            }).eq('id',row['id']).execute())
+        except Exception as exc:
+            logger.exception('Staging overlay render failed attempt=%s', row['id'])
+            # Supabase Storage can briefly fail with httpx/httpcore transport errors
+            # even after the upload's local retries. Requeue at most twice more.
+            import httpx
+            if isinstance(exc, httpx.TransportError):
+                def retry_transport():
+                    state = (db.client.table(db.attempt_table)
+                             .select('overlay_error').eq('id', row['id'])
+                             .limit(1).execute().data)
+                    previous = (state[0].get('overlay_error') or '') if state else ''
+                    count = int(previous.rsplit('_', 1)[-1]) if previous.startswith('transport_retry_') else 0
+                    if count < 2:
+                        db.client.table(db.attempt_table).update({
+                            'overlay_video_status': 'pending',
+                            'overlay_finished_at': None,
+                            'overlay_error': f'transport_retry_{count + 1}'
+                        }).eq('id', row['id']).execute()
+                        logger.warning('Requeued staging overlay after transport error attempt=%s retry=%s', row['id'], count + 1)
+                        return
+                    db.client.table(db.attempt_table).update({
+                        'overlay_video_status': 'failed',
+                        'overlay_finished_at': datetime.now(timezone.utc).isoformat(),
+                        'overlay_error': 'transport_retries_exhausted'
+                    }).eq('id', row['id']).execute()
+                await asyncio.to_thread(retry_transport)
+            else:
+                await asyncio.to_thread(lambda: db.client.table(db.attempt_table).update({
+                    'overlay_video_status':'failed',
+                    'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
+                    'overlay_error':'render_failed_see_logs'
+                }).eq('id',row['id']).execute())
 
 
 async def media_loop(bot, db, analysis_lock=None):
