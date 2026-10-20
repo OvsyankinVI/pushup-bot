@@ -9,6 +9,11 @@ def main():
     with open(trace_file,encoding='utf-8') as f: data=json.load(f)
     trace=data['trace']; decision=data['classification']
     frames=trace['frames']; sample_fps=float(trace['fps'])
+    segments=(decision.get('world_geometry') or {}).get('segment_details') or []
+    events=sorted(float(t) for seg in segments if seg.get('counted') for t in (seg.get('rep_event_s') or []))
+    final_count=int(decision.get('count') or 0)
+    # Only show a growing counter when exact algorithm events explain the final count.
+    live_counter=(decision.get('status')=='accepted' and len(events)==final_count and final_count>0)
     cap=cv2.VideoCapture(source)
     if not cap.isOpened(): raise RuntimeError('Cannot open source video')
     fps=cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -38,8 +43,11 @@ def main():
                 for v in joints.values():
                     cv2.circle(frame,(int(v[0]*width),int(v[1]*height)),4,(0,255,80),-1,cv2.LINE_AA)
             cv2.rectangle(frame,(0,0),(width,65),(15,15,15),-1)
-            cv2.putText(frame,'FINAL: '+str(decision.get('count',0))+'  '+str(decision.get('status','')).upper(),(10,25),cv2.FONT_HERSHEY_SIMPLEX,.6,(255,255,255),2,cv2.LINE_AA)
-            cv2.putText(frame,'Events not localized - final total only',(10,49),cv2.FONT_HERSHEY_SIMPLEX,.38,(190,190,190),1,cv2.LINE_AA)
+            current=sum(event<=t for event in events) if live_counter else final_count
+            title=('REPS: '+str(current)+' / '+str(final_count)) if live_counter else ('FINAL: '+str(final_count))
+            cv2.putText(frame,title+'  '+str(decision.get('status','')).upper(),(10,25),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),2,cv2.LINE_AA)
+            subtitle='Counter: algorithm transition events' if live_counter else 'Events unavailable: final total only'
+            cv2.putText(frame,subtitle,(10,49),cv2.FONT_HERSHEY_SIMPLEX,.38,(190,190,190),1,cv2.LINE_AA)
             out.write(frame);written+=1;frame_index+=1
     finally:
         out.release();cap.release()
