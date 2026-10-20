@@ -22,7 +22,7 @@ async def miniapp_asset(asset_name: str):
     if asset_name not in allowed:
         raise HTTPException(404, 'Asset not found')
     asset_path = Path(__file__).resolve().parent.parent / 'miniapp' / 'assets' / asset_name
-    return FileResponse(asset_path, media_type='image/svg+xml', headers={'Cache-Control': 'public, max-age=3600'})
+    return FileResponse(asset_path, media_type='image/webp' if asset_name.endswith('.webp') else 'image/svg+xml', headers={'Cache-Control': 'public, max-age=3600'})
 
 @router.get('/miniapp')
 async def page():
