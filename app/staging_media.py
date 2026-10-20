@@ -84,7 +84,7 @@ def _overlay_candidates(db, cutoff):
             .eq('video_status','ready')
             .eq('overlay_video_status','pending')
             .not_.is_('video_storage_path','null')
-            .order('id',desc=True).limit(1).execute().data)
+            .order('id').limit(1).execute().data)
 
 
 def _render_overlay(db, row):
@@ -129,11 +129,21 @@ def _render_overlay(db, row):
         logger.info('Staging overlay complete attempt=%s result=%s',aid,proc.stdout.strip())
 
 
-async def _process_overlay(db, cutoff):
+async def _process_overlay(db, cutoff, analysis_lock=None):
     rows=await asyncio.to_thread(_overlay_candidates,db,cutoff)
     for row in rows:
         try:
-            await asyncio.to_thread(_render_overlay,db,row)
+            if analysis_lock is None:
+                await asyncio.to_thread(_render_overlay,db,row)
+            elif not analysis_lock.locked():
+                async with analysis_lock:
+                    # Prefer queued recognitions; no new MediaPipe job is claimed during rendering.
+                    queued = await asyncio.to_thread(lambda: db.client.table(db.attempt_table).select('id').eq('status','pending').limit(1).execute().data)
+                    if queued:
+                        return
+                    await asyncio.to_thread(_render_overlay,db,row)
+            else:
+                return
         except Exception:
             logger.exception('Staging overlay render failed attempt=%s',row['id'])
             await asyncio.to_thread(lambda: db.client.table(db.attempt_table).update({
@@ -143,7 +153,7 @@ async def _process_overlay(db, cutoff):
             }).eq('id',row['id']).execute())
 
 
-async def media_loop(bot, db):
+async def media_loop(bot, db, analysis_lock=None):
     """Independent low-concurrency archival loop; failures never block results."""
     while True:
         try:
@@ -151,7 +161,7 @@ async def media_loop(bot, db):
             expired = await asyncio.to_thread(_expired, db, cutoff)
             if expired:
                 await asyncio.to_thread(_cleanup, db, expired)
-            await _process_overlay(db, cutoff)
+            await _process_overlay(db, cutoff, analysis_lock)
             pending = await asyncio.to_thread(_pending, db, cutoff)
             for attempt in pending:
                 await _archive_one(bot, db, attempt)
