@@ -66,6 +66,40 @@ main{padding-bottom:calc(160px + env(safe-area-inset-bottom))}
 .athlete-accent{object-fit:contain;background:none!important;display:block!important}
 .light .athlete-accent{content:url('/miniapp/assets/character-light.webp?v=20261020b')}
 .podium img.medal{object-fit:contain;background:none!important;max-width:none}
+
+/* 2026-10-20: richer tactile depth and light-theme artwork cleanup */
+.ranking-header{isolation:isolate}
+.athlete-accent{pointer-events:none}
+.light .athlete-accent{
+  -webkit-mask-image:radial-gradient(ellipse 73% 73% at 38% 37%,#000 48%,#000d 63%,transparent 91%);
+  mask-image:radial-gradient(ellipse 73% 73% at 38% 37%,#000 48%,#000d 63%,transparent 91%);
+}
+.card,.list,.profile-card{
+  box-shadow:inset 0 1px 0 #ffffff13,0 10px 20px #00000022,0 22px 42px #00000015!important;
+}
+.light .card,.light .list,.light .profile-card{
+  box-shadow:inset 0 2px 1px #ffffffeb,inset 0 -2px 6px #bd9e8314,0 9px 17px #65452a18,0 22px 34px #5a4b6c18!important;
+}
+.podium>.podium-place{
+  box-shadow:inset 0 2px 2px #ffffff3b,inset 2px 0 4px #ffffff12,0 9px 14px #0003,0 20px 30px #0002!important;
+}
+.podium>.podium-place.winner{
+  box-shadow:inset 0 2px 3px #ffe7b17d,inset 0 -3px 8px #57200c36,0 8px 15px #ec8a2b35,0 22px 35px #0003!important;
+}
+.light .podium>.podium-place{
+  box-shadow:inset 0 2px 2px #fff,inset 0 -4px 10px #9f89a11b,0 10px 18px #8e799c27,0 23px 30px #8e799c1c!important;
+}
+.light .podium>.podium-place.winner{
+  box-shadow:inset 0 3px 3px #fff8e4,inset 0 -5px 12px #c37b3933,0 11px 19px #f3a24c45,0 26px 38px #d9a36a35!important;
+}
+.tabs{box-shadow:inset 0 3px 6px #0002,0 6px 14px #0002,0 12px 24px #00000013!important}
+.light .tabs{box-shadow:inset 0 3px 6px #72637620,0 6px 12px #8c809c20,0 14px 23px #8c809c12!important}
+.tabs .selected,.ranking-date-tab.selected{box-shadow:inset 0 2px 1px #ffdcab,0 5px 9px #f8763880,0 10px 19px #ff741e45!important}
+.nav{box-shadow:inset 0 2px 1px #ffffff10,0 -7px 24px #0002!important}
+.light .nav{box-shadow:inset 0 2px 1px #fff,0 -8px 28px #6b526327!important}
+.theme-toggle{box-shadow:inset 0 2px 1px #ffffff30,0 6px 12px #0003,0 12px 20px #0002!important}
+.light .theme-toggle{box-shadow:inset 0 2px 1px #fff,0 6px 12px #ac8b792e,0 13px 21px #ac8b7921!important}
+
 </style><main id="app"><h1>Отжиматор 💪</h1><div class="card">Загружаем результаты…</div></main><nav class="nav" id="nav"></nav><script>
 const tg=window.Telegram?.WebApp;document.body.classList.toggle('light',localStorage.getItem('pushup-theme')==='light');tg?.ready();tg?.expand();let data=null,tab=0,period='today',historyOpen=false,historyLoading=false,historyError='',viewedPerson=null,editorId=null,editValue=0;const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const names=['Рейтинг','Профиль'],icons=['🏆','👤'];function base(k,id){return +(data[k]?.[id]||0)}function extra(k,id){return +(data[k+'_manual']?.[id]||0)}function score(k,id){return base(k,id)+extra(k,id)}function scoreText(k,id){const n=base(k,id),m=extra(k,id);return n+(m?' <span class="score-extra">(+'+m+')</span>':'')}function rank(which){return [...data.members].sort((a,b)=>score(which,b.id)-score(which,a.id)||a.name.localeCompare(b.name,'ru'))}function placeRank(r,i,which){if(i<0)return 0;const val=score(which,r[i].id);return 1+new Set(r.slice(0,i).map(m=>score(which,m.id)).filter(v=>v>val)).size}function line(m,i,which){const place=placeRank(rank(which),i,which);return '<div class="row clickable" onclick="showPerson('+m.id+')"><span>'+(place<=3?['🥇','🥈','🥉'][place-1]:place)+ ' <span class="avatar">👤</span> '+esc(m.name)+'</span><strong>'+scoreText(which,m.id)+'</strong></div>'}function stat(n,label,emoji){return '<div class="card">'+emoji+'<strong>'+n+'</strong><small class="muted">'+label+'</small></div>'}function historyDateLabel(d){if(d===data.date)return 'СЕГОДНЯ';const [y,m,day]=d.split('-');return day+'.'+m+'.'+y}
 function openHistoryDate(){const el=$('#history-date');if(el){try{el.showPicker()}catch(e){el.focus();el.click()}}}
