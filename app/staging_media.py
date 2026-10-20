@@ -81,7 +81,7 @@ def _overlay_candidates(db, cutoff):
             .eq('video_status','ready')
             .eq('overlay_video_status','pending')
             .not_.is_('video_storage_path','null')
-            .order('id').limit(1).execute().data)
+            .order('id',desc=True).limit(1).execute().data)
 
 
 def _render_overlay(db, row):
@@ -138,10 +138,10 @@ async def media_loop(bot, db):
             expired = await asyncio.to_thread(_expired, db, cutoff)
             if expired:
                 await asyncio.to_thread(_cleanup, db, expired)
+            await _process_overlay(db, cutoff)
             pending = await asyncio.to_thread(_pending, db, cutoff)
             for attempt in pending:
                 await _archive_one(bot, db, attempt)
-            await _process_overlay(db, cutoff)
         except asyncio.CancelledError:
             raise
         except Exception:
