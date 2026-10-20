@@ -2,6 +2,7 @@
 import json
 import sys
 import cv2
+import numpy as np
 
 EDGES=((11,13),(13,15),(12,14),(14,16))
 def main():
@@ -21,7 +22,9 @@ def main():
     if w<1 or h<1: raise RuntimeError('Invalid video dimensions')
     scale=min(1.0,480.0/max(w,h))
     width=max(2,int(w*scale)//2*2);height=max(2,int(h*scale)//2*2)
-    out=cv2.VideoWriter(target,cv2.VideoWriter_fourcc(*'mp4v'),min(fps,15.0),(width,height))
+    panel_height=max(128,int(height*.36)//2*2)
+    canvas_height=height+panel_height
+    out=cv2.VideoWriter(target,cv2.VideoWriter_fourcc(*'mp4v'),min(fps,15.0),(width,canvas_height))
     if not out.isOpened():raise RuntimeError('Cannot open MP4 writer')
     frame_index=0;written=0
     step=max(1,round(fps/15.0))
@@ -42,15 +45,27 @@ def main():
                         cv2.line(frame,(int(pa[0]*width),int(pa[1]*height)),(int(pb[0]*width),int(pb[1]*height)),(0,220,255),2,cv2.LINE_AA)
                 for v in joints.values():
                     cv2.circle(frame,(int(v[0]*width),int(v[1]*height)),4,(0,255,80),-1,cv2.LINE_AA)
-            cv2.rectangle(frame,(0,0),(width,65),(15,15,15),-1)
+            canvas=np.empty((canvas_height,width,3),dtype=np.uint8)
+            canvas[:height]=frame
+            canvas[height:]=(31,24,23)
             current=sum(event<=t for event in events) if live_counter else final_count
-            title=('REPS: '+str(current)+' / '+str(final_count)) if live_counter else ('FINAL: '+str(final_count))
-            cv2.putText(frame,title+'  '+str(decision.get('status','')).upper(),(10,25),cv2.FONT_HERSHEY_SIMPLEX,.55,(255,255,255),2,cv2.LINE_AA)
-            subtitle='Counter: algorithm transition events' if live_counter else 'Events unavailable: final total only'
-            cv2.putText(frame,subtitle,(10,49),cv2.FONT_HERSHEY_SIMPLEX,.38,(190,190,190),1,cv2.LINE_AA)
-            out.write(frame);written+=1;frame_index+=1
+            cv2.line(canvas,(0,height),(width,height),(75,63,54),2,cv2.LINE_AA)
+            font=cv2.FONT_HERSHEY_SIMPLEX
+            heading='PUSH-UPS'
+            hscale=max(.55,min(.95,width/440))
+            (tw,_),_=cv2.getTextSize(heading,font,hscale,2)
+            cv2.putText(canvas,heading,((width-tw)//2,height+int(panel_height*.25)),font,hscale,(245,245,245),2,cv2.LINE_AA)
+            number=str(current)
+            nscale=max(1.5,min(3.8,width/130))
+            (nw,_),_=cv2.getTextSize(number,font,nscale,5)
+            cv2.putText(canvas,number,((width-nw)//2,height+int(panel_height*.77)),font,nscale,(255,255,255),5,cv2.LINE_AA)
+            if not live_counter:
+                note='FINAL RESULT'
+                (ntw,_),_=cv2.getTextSize(note,font,.36,1)
+                cv2.putText(canvas,note,((width-ntw)//2,canvas_height-10),font,.36,(180,180,180),1,cv2.LINE_AA)
+            out.write(canvas);written+=1;frame_index+=1
     finally:
         out.release();cap.release()
     if written==0:raise RuntimeError('No frames rendered')
-    print(json.dumps({'frames':written,'size':[width,height]}))
+    print(json.dumps({'frames':written,'size':[width,canvas_height]}))
 if __name__=='__main__':main()
