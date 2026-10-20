@@ -51,7 +51,7 @@ def authenticate(request, authorization):
     uid = telegram_user(raw, request.app.state.settings.telegram_bot_token)
     chat_id = request.app.state.settings.telegram_chat_id
     if chat_id is None:
-        raise HTTPException(503, 'Не настроен тестовый чат')
+        raise HTTPException(503, 'Не настроен чат Telegram')
     return uid, chat_id, request.app.state.db
 
 
