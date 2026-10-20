@@ -112,9 +112,12 @@ body{color-scheme:dark!important}
 .podium{overflow:visible!important;overflow-x:visible!important;scrollbar-width:none!important;padding-bottom:80px!important;margin-bottom:-62px!important}
 .podium::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
 .podium>.podium-place{padding-bottom:15px!important}
-.podium img.medal,.podium .medal,.podium .winner .medal.gold{top:auto!important;bottom:-63px!important;left:50%!important;transform:translateX(-50%)!important;width:58px!important;height:67px!important;z-index:4!important}
-.podium .winner .medal.gold{width:67px!important;height:75px!important;bottom:-68px!important}
-.podium+.card.list{margin-top:82px!important}
+.podium img.medal,.podium .medal,.podium .winner .medal.gold{top:auto!important;bottom:-34px!important;left:50%!important;transform:translateX(-50%)!important;width:58px!important;height:67px!important;z-index:4!important}
+.podium .winner .medal.gold{width:67px!important;height:75px!important;bottom:-38px!important}
+.podium+.card.list{margin-top:48px!important}
+/* Remove the actual empty leaderboard bar, which lives outside the podium */
+#app>.bar,#app>.progress,.podium~.bar,.podium~.progress,.podium~.ranking-progress,.podium~.ranking-track{display:none!important}
+.podium{padding-bottom:42px!important;margin-bottom:-34px!important}
 </style><main id="app"><h1>Отжиматор 💪</h1><div class="card">Загружаем результаты…</div></main><nav class="nav" id="nav"></nav><script>
 const tg=window.Telegram?.WebApp;document.body.classList.remove('light');localStorage.setItem('pushup-theme','dark');tg?.ready();tg?.expand();let data=null,tab=0,period='today',historyOpen=false,historyLoading=false,historyError='',viewedPerson=null,editorId=null,editValue=0;const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const names=['Рейтинг','Профиль'],icons=['🏆','👤'];function base(k,id){return +(data[k]?.[id]||0)}function extra(k,id){return +(data[k+'_manual']?.[id]||0)}function score(k,id){return base(k,id)+extra(k,id)}function scoreText(k,id){const n=base(k,id),m=extra(k,id);return n+(m?' <span class="score-extra">(+'+m+')</span>':'')}function rank(which){return [...data.members].sort((a,b)=>score(which,b.id)-score(which,a.id)||a.name.localeCompare(b.name,'ru'))}function placeRank(r,i,which){if(i<0)return 0;const val=score(which,r[i].id);return 1+new Set(r.slice(0,i).map(m=>score(which,m.id)).filter(v=>v>val)).size}function line(m,i,which){const place=placeRank(rank(which),i,which);return '<div class="row clickable" onclick="showPerson('+m.id+')"><span>'+(place<=3?['🥇','🥈','🥉'][place-1]:place)+ ' <span class="avatar">👤</span> '+esc(m.name)+'</span><strong>'+scoreText(which,m.id)+'</strong></div>'}function stat(n,label,emoji){return '<div class="card">'+emoji+'<strong>'+n+'</strong><small class="muted">'+label+'</small></div>'}function historyDateLabel(d){if(d===data.date)return 'СЕГОДНЯ';const [y,m,day]=d.split('-');return day+'.'+m+'.'+y}
 function openHistoryDate(){const el=$('#history-date');if(el){try{el.showPicker()}catch(e){el.focus();el.click()}}}
