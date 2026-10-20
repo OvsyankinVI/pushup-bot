@@ -11,11 +11,9 @@ from datetime import date, datetime, timezone
 
 from app.admin_alerts import send_admin_alert
 from app.pushup_diagnostics import format_diagnostics
-from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.summaries import rank_for_user, promotion_message, rival_challenge, overtaken_message
 from app.safe_logging import log_exception
-from app.world_pose_analysis import analyze_world_landmarks
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +81,8 @@ async def _isolated_pose_analysis(video_path, attempt_id, timeout=120):
             await task
         except asyncio.CancelledError:
             pass
-        logger.info('Pushup isolated child attempt=%s child_peak_rss_mb=%.1f child_exit=%s',
-                    attempt_id, peak_child_mb, proc.returncode)
+        logger.info('Pushup isolated child attempt=%s child_peak_rss_mb=%.1f parent_rss_mb=%.1f combined_estimate_mb=%.1f child_exit=%s',
+                    attempt_id, peak_child_mb, _memory_mb()[0], peak_child_mb + _memory_mb()[0], proc.returncode)
 
 
 async def process_attempt(application, settings, db, attempt):
