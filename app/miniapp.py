@@ -143,6 +143,8 @@ async def data(request: Request, authorization: str | None = Header(None),
                     try:
                         signed = db.client.storage.from_(BUCKET).create_signed_url(a['video_storage_path'], 900)
                         a['video_url'] = signed.get('signedURL') or signed.get('signedUrl')
+                        if not a['video_url']:
+                            a['video_status'] = 'failed'
                     except Exception:
                         a['video_status'] = 'failed'
                 a.pop('video_storage_path', None)
