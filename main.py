@@ -15,6 +15,7 @@ from app.safe_logging import log_exception
 from app.summaries import format_summary, midnight_report_date, today_moscow
 from app.telegram_bot import build_application, update_failed
 from app.miniapp import router as miniapp_router
+from app.production_media import media_loop
 
 logger = logging.getLogger(__name__)
 # HTTP client URLs can contain bot tokens. Never enable their request logs.
@@ -36,12 +37,18 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
+            media_task = asyncio.create_task(media_loop(telegram.bot, db))
             worker_task = None
             if settings.pushup_analysis_enabled:
                 worker_task = asyncio.create_task(worker_loop(telegram, settings, db))
             try:
                 yield
             finally:
+                media_task.cancel()
+                try:
+                    await media_task
+                except asyncio.CancelledError:
+                    pass
                 if worker_task:
                     worker_task.cancel()
                     try:
