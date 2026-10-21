@@ -19,7 +19,7 @@ def _set_status(db, attempt_id, status, path=None):
     fields = {'video_status': status}
     if path is not None:
         fields['video_storage_path'] = path
-    db.client.table(db.attempt_table).update(fields).eq('id', attempt_id).execute()
+    db.client.table('pushup_attempts').update(fields).eq('id', attempt_id).execute()
 
 
 async def _archive_one(bot, db, attempt):
@@ -57,7 +57,7 @@ async def _archive_one(bot, db, attempt):
             # Best effort: overlay selection already uses video_status=ready,
             # so failure of this timestamp must never invalidate the original.
             try:
-                db.client.table(db.attempt_table).update({
+                db.client.table('pushup_attempts').update({
                     'overlay_queued_at': datetime.now(timezone.utc).isoformat()
                 }).eq('id', aid).is_('overlay_queued_at', 'null').execute()
             except httpx.TransportError:
@@ -79,7 +79,7 @@ async def _archive_one(bot, db, attempt):
 
 
 def _pending(db, cutoff):
-    return (db.client.table(db.attempt_table)
+    return (db.client.table('pushup_attempts')
             .select('id,chat_id,telegram_file_id,report_date')
             .gte('report_date', cutoff.isoformat())
             .in_('status', ['accepted', 'rejected', 'uncertain'])
@@ -89,7 +89,7 @@ def _pending(db, cutoff):
 
 
 def _expired(db, cutoff):
-    return (db.client.table(db.attempt_table)
+    return (db.client.table('pushup_attempts')
             .select('id,video_storage_path,overlay_video_path')
             .lt('report_date', cutoff.isoformat())
             .not_.is_('video_storage_path', 'null')
@@ -100,7 +100,7 @@ def _cleanup(db, rows):
     for row in rows:
         path = row['video_storage_path']
         db.client.storage.from_(BUCKET).remove([p for p in (path,row.get('overlay_video_path')) if p])
-        db.client.table(db.attempt_table).update({
+        db.client.table('pushup_attempts').update({
             'video_status': 'expired', 'video_storage_path': None,
             'overlay_video_status':'expired','overlay_video_path':None
         }).eq('id', row['id']).eq('video_storage_path', path).execute()
@@ -108,7 +108,7 @@ def _cleanup(db, rows):
 
 
 def _overlay_candidates(db, cutoff):
-    return (db.client.table(db.attempt_table)
+    return (db.client.table('pushup_attempts')
             .select('id,video_storage_path')
             .gte('report_date',cutoff.isoformat())
             .eq('video_status','ready')
@@ -121,18 +121,18 @@ def _render_overlay(db, row):
     """Separate child process; no pose inference and no bot interaction."""
     aid=row['id']
     # Do not compete with recognition for memory.
-    active=(db.client.table(db.attempt_table).select('id')
+    active=(db.client.table('pushup_attempts').select('id')
             .eq('status','processing').limit(1).execute().data)
     if active:return
     diagnostic=(db.client.table('pushup_overlay_diagnostics')
                 .select('trace,classification').eq('attempt_id',aid).limit(1).execute().data)
     if not diagnostic:
-        db.client.table(db.attempt_table).update({'overlay_video_status':'unavailable'}).eq('id',aid).execute()
+        db.client.table('pushup_attempts').update({'overlay_video_status':'unavailable'}).eq('id',aid).execute()
         return
     import subprocess
     started=datetime.now(timezone.utc)
     start_clock=time.monotonic()
-    db.client.table(db.attempt_table).update({
+    db.client.table('pushup_attempts').update({
         'overlay_started_at':started.isoformat()
     }).eq('id',aid).execute()
     with tempfile.TemporaryDirectory(prefix='overlay_') as folder:
@@ -160,7 +160,7 @@ def _render_overlay(db, row):
                     raise
                 logger.warning('Production overlay upload retry attempt=%s try=%s', aid, upload_attempt, exc_info=True)
                 time.sleep(2 * upload_attempt)
-        db.client.table(db.attempt_table).update({
+        db.client.table('pushup_attempts').update({
             'overlay_video_path':target,'overlay_video_status':'ready',
             'overlay_error':None,
             'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
@@ -178,7 +178,7 @@ async def _process_overlay(db, cutoff, analysis_lock=None):
             elif not analysis_lock.locked():
                 async with analysis_lock:
                     # Prefer queued recognitions; no new MediaPipe job is claimed during rendering.
-                    queued = await asyncio.to_thread(lambda: db.client.table(db.attempt_table).select('id').eq('status','pending').limit(1).execute().data)
+                    queued = await asyncio.to_thread(lambda: db.client.table('pushup_attempts').select('id').eq('status','pending').limit(1).execute().data)
                     if queued:
                         return
                     await asyncio.to_thread(_render_overlay,db,row)
@@ -191,27 +191,27 @@ async def _process_overlay(db, cutoff, analysis_lock=None):
             import httpx
             if isinstance(exc, httpx.TransportError):
                 def retry_transport():
-                    state = (db.client.table(db.attempt_table)
+                    state = (db.client.table('pushup_attempts')
                              .select('overlay_error').eq('id', row['id'])
                              .limit(1).execute().data)
                     previous = (state[0].get('overlay_error') or '') if state else ''
                     count = int(previous.rsplit('_', 1)[-1]) if previous.startswith('transport_retry_') else 0
                     if count < 2:
-                        db.client.table(db.attempt_table).update({
+                        db.client.table('pushup_attempts').update({
                             'overlay_video_status': 'pending',
                             'overlay_finished_at': None,
                             'overlay_error': f'transport_retry_{count + 1}'
                         }).eq('id', row['id']).execute()
                         logger.warning('Requeued production overlay after transport error attempt=%s retry=%s', row['id'], count + 1)
                         return
-                    db.client.table(db.attempt_table).update({
+                    db.client.table('pushup_attempts').update({
                         'overlay_video_status': 'failed',
                         'overlay_finished_at': datetime.now(timezone.utc).isoformat(),
                         'overlay_error': 'transport_retries_exhausted'
                     }).eq('id', row['id']).execute()
                 await asyncio.to_thread(retry_transport)
             else:
-                await asyncio.to_thread(lambda: db.client.table(db.attempt_table).update({
+                await asyncio.to_thread(lambda: db.client.table('pushup_attempts').update({
                     'overlay_video_status':'failed',
                     'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
                     'overlay_error':'render_failed_see_logs'
