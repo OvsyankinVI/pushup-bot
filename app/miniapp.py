@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import json
 import time
+import logging
+import httpx
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -14,6 +16,20 @@ from app.staging_media import BUCKET
 from app.summaries import today_moscow
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _retry_read(operation, attempts=3):
+    """Retry only idempotent reads after temporary HTTP transport failures."""
+    for index in range(attempts):
+        try:
+            return operation()
+        except httpx.TransportError:
+            if index + 1 == attempts:
+                raise
+            logger.warning('Mini App Supabase read transport retry=%s/%s', index + 1, attempts)
+            time.sleep(min(0.4 * (2 ** index), 1.5))
+
 
 
 @router.get('/miniapp/assets/{asset_name}')
@@ -174,7 +190,11 @@ async def data(request: Request, authorization: str | None = Header(None),
             'daily': dict(daily), 'daily_manual': dict(daily_manual)
         }
 
-    result = await asyncio.to_thread(load)
+    try:
+        result = await asyncio.to_thread(_retry_read, load)
+    except httpx.TransportError:
+        logger.warning('Mini App data unavailable after transport retries')
+        raise HTTPException(503, 'Временная ошибка соединения. Попробуй ещё раз.') from None
     if result is None:
         raise HTTPException(403, 'Сначала зарегистрируйся в тестовом чате через /join')
     return result
