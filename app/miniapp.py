@@ -34,7 +34,7 @@ def _retry_read(operation, attempts=3):
 
 @router.get('/miniapp/assets/{asset_name}')
 async def miniapp_asset(asset_name: str):
-    allowed = {'medals.svg', 'pushup-athlete.svg', 'character-light.webp', 'character-dark.webp', 'medal-gold.webp', 'medal-silver.webp', 'medal-bronze.webp', 'crown.webp'}
+    allowed = {'medals.svg', 'pushup-athlete.svg', 'character-light.webp', 'character-dark.webp', 'medal-gold.webp', 'medal-silver.webp', 'medal-bronze.webp', 'crown.webp', *(f'character-{i:02d}.webp' for i in range(1, 7))}
     if asset_name not in allowed:
         raise HTTPException(404, 'Asset not found')
     asset_path = Path(__file__).resolve().parent.parent / 'miniapp' / 'assets' / asset_name
