@@ -55,19 +55,24 @@ def _segments(mask,min_frames=3):
     return result
 
 def _count_elbow_cycles(values,min_range=35.0):
+    """Return the original count/amplitude plus exact completion frame indices."""
     valid=[v for v in values if v is not None]
-    if len(valid)<5:return 0,0.0
+    if len(valid)<5:return 0,0.0,[]
     ordered=sorted(valid);lo=ordered[int((len(ordered)-1)*.15)];hi=ordered[int((len(ordered)-1)*.85)];amplitude=hi-lo
-    if amplitude<min_range:return 0,amplitude
-    low=lo+amplitude*.30;high=lo+amplitude*.70;state=None;transitions=0
-    for value in values:
+    if amplitude<min_range:return 0,amplitude,[]
+    low=lo+amplitude*.30;high=lo+amplitude*.70;state=None;transitions=0;events=[]
+    for index,value in enumerate(values):
         if value is None:continue
         if state is None:
             if value<=low:state='bent'
             elif value>=high:state='straight'
-        elif state=='straight' and value<=low:state='bent';transitions+=1
-        elif state=='bent' and value>=high:state='straight';transitions+=1
-    return transitions//2,amplitude
+        elif state=='straight' and value<=low:
+            state='bent';transitions+=1
+            if transitions%2==0:events.append(index)
+        elif state=='bent' and value>=high:
+            state='straight';transitions+=1
+            if transitions%2==0:events.append(index)
+    return transitions//2,amplitude,events
 
 def analyze_world_landmarks(world_landmarks,actual_fps:float)->dict:
     sampled=len(world_landmarks);world_frames=horizontal=vertical=straight=pushup_like=0;torso_verticalities=[];body_angles=[];timeline=[]
@@ -92,11 +97,11 @@ def analyze_world_landmarks(world_landmarks,actual_fps:float)->dict:
     pose_mask=[bool(row and row['pose']) for row in timeline];segments=_segments(pose_mask,max(3,int(actual_fps*1.0)));min_counted_duration_s=2.5;min_counted_frames=max(5,int(actual_fps*min_counted_duration_s));context_window_s=3.0;context_frames=max(1,int(actual_fps*context_window_s));segment_details=[];gated_count=gated_frames=counted_segments=0
     for start,end in segments:
         rows=[timeline[i] for i in range(start,end) if timeline[i]];elbows=[r['elbow'] for r in rows];verticalities=[r['verticality'] for r in rows];shoulders=[r['shoulder_y'] for r in rows];knees=[r['knee_angle'] for r in rows];left_knees=[r['left_knee'] for r in rows];right_knees=[r['right_knee'] for r in rows];hips=[r['hip_y'] for r in rows];left_leg_vis=[r['left_leg_visibility'] for r in rows];right_leg_vis=[r['right_leg_visibility'] for r in rows]
-        count,amplitude=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90);coupling,coupling_samples=_motion_coupling(elbows,shoulders)
+        count,amplitude,rep_frames=_count_elbow_cycles(elbows);frames=end-start;counted=frames>=min_counted_frames;median_v=_median(verticalities);p75_v=_percentile(verticalities,.75);p90_v=_percentile(verticalities,.90);coupling,coupling_samples=_motion_coupling(elbows,shoulders)
         knee_p10=_percentile(knees,.10);knee_p90=_percentile(knees,.90);knee_range=(knee_p90-knee_p10) if knee_p10 is not None and knee_p90 is not None else None;left_knee_p10=_percentile(left_knees,.10);left_knee_p90=_percentile(left_knees,.90);left_knee_range=(left_knee_p90-left_knee_p10) if left_knee_p10 is not None and left_knee_p90 is not None else None;right_knee_p10=_percentile(right_knees,.10);right_knee_p90=_percentile(right_knees,.90);right_knee_range=(right_knee_p90-right_knee_p10) if right_knee_p10 is not None and right_knee_p90 is not None else None;left_leg_visibility=_median(left_leg_vis);right_leg_visibility=_median(right_leg_vis);reliable_leg_sides=sum(1 for v in (left_leg_visibility,right_leg_visibility) if v is not None and v>=.55);hip_p10=_percentile(hips,.10);hip_p90=_percentile(hips,.90);hip_range=(hip_p90-hip_p10) if hip_p10 is not None and hip_p90 is not None else None;knee_elbow_sync,knee_elbow_samples=_motion_coupling(elbows,knees)
         strict_horizontal_ratio=sum(1 for v in verticalities if v is not None and v<=.55)/len(verticalities) if verticalities else 0.0;pre_v,pre_frames=_context_verticality(timeline,start-context_frames,start);post_v,post_frames=_context_verticality(timeline,end,end+context_frames)
         gated_frames+=frames
         if counted:gated_count+=count;counted_segments+=1
-        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None,'motion_coupling':round(coupling,3) if coupling is not None else None,'coupling_samples':coupling_samples,'strict_horizontal_ratio':round(strict_horizontal_ratio,3),'pre_verticality':round(pre_v,3) if pre_v is not None else None,'post_verticality':round(post_v,3) if post_v is not None else None,'pre_context_frames':pre_frames,'post_context_frames':post_frames,'knee_range_deg':round(knee_range,1) if knee_range is not None else None,'hip_y_range':round(hip_range,3) if hip_range is not None else None,'knee_elbow_sync':round(knee_elbow_sync,3) if knee_elbow_sync is not None else None,'knee_elbow_samples':knee_elbow_samples,'left_knee_range_deg':round(left_knee_range,1) if left_knee_range is not None else None,'right_knee_range_deg':round(right_knee_range,1) if right_knee_range is not None else None,'left_leg_visibility':round(left_leg_visibility,3) if left_leg_visibility is not None else None,'right_leg_visibility':round(right_leg_visibility,3) if right_leg_visibility is not None else None,'reliable_leg_sides':reliable_leg_sides})
+        segment_details.append({'start_s':round(start/actual_fps,2),'end_s':round(end/actual_fps,2),'frames':frames,'count':count,'counted':counted,'rep_event_s':[round((start+i)/actual_fps,2) for i in rep_frames] if counted else [],'elbow_range':round(amplitude,1),'median_verticality':round(median_v,3) if median_v is not None else None,'p75_verticality':round(p75_v,3) if p75_v is not None else None,'p90_verticality':round(p90_v,3) if p90_v is not None else None,'motion_coupling':round(coupling,3) if coupling is not None else None,'coupling_samples':coupling_samples,'strict_horizontal_ratio':round(strict_horizontal_ratio,3),'pre_verticality':round(pre_v,3) if pre_v is not None else None,'post_verticality':round(post_v,3) if post_v is not None else None,'pre_context_frames':pre_frames,'post_context_frames':post_frames,'knee_range_deg':round(knee_range,1) if knee_range is not None else None,'hip_y_range':round(hip_range,3) if hip_range is not None else None,'knee_elbow_sync':round(knee_elbow_sync,3) if knee_elbow_sync is not None else None,'knee_elbow_samples':knee_elbow_samples,'left_knee_range_deg':round(left_knee_range,1) if left_knee_range is not None else None,'right_knee_range_deg':round(right_knee_range,1) if right_knee_range is not None else None,'left_leg_visibility':round(left_leg_visibility,3) if left_leg_visibility is not None else None,'right_leg_visibility':round(right_leg_visibility,3) if right_leg_visibility is not None else None,'reliable_leg_sides':reliable_leg_sides})
     denominator=world_frames or 1
     return {'sampled_frames':sampled,'world_frames':world_frames,'world_pose_ratio':world_frames/sampled if sampled else 0.0,'horizontal_ratio':horizontal/denominator,'vertical_ratio':vertical/denominator,'straight_body_ratio':straight/denominator,'pushup_pose_ratio':pushup_like/denominator,'median_torso_verticality':_median(torso_verticalities),'median_body_line_deg':_median(body_angles),'gated_frames':gated_frames,'gated_ratio':gated_frames/sampled if sampled else 0.0,'gated_segments':len(segments),'counted_segments':counted_segments,'gated_pushup_count':gated_count,'segment_details':segment_details,'actual_sample_fps':actual_fps,'min_counted_segment_s':min_counted_duration_s,'context_window_s':context_window_s}
