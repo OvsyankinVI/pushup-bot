@@ -6,6 +6,7 @@ import tempfile
 import json
 import sys
 import time
+import httpx
 from datetime import datetime, timezone
 from datetime import timedelta
 from app.summaries import today_moscow
@@ -31,7 +32,8 @@ async def _archive_one(bot, db, attempt):
             local = handle.name
         await f.download_to_drive(custom_path=local)
         def upload():
-            import httpx
+            # Each stage is idempotent. A successful Storage upload must not
+            # be marked failed because the subsequent database update timed out.
             for upload_attempt in range(1, 5):
                 try:
                     with open(local, 'rb') as source:
@@ -41,11 +43,30 @@ async def _archive_one(bot, db, attempt):
                 except httpx.TransportError:
                     if upload_attempt == 4:
                         raise
-                    logger.warning('Staging original upload transport retry attempt=%s try=%s', aid, upload_attempt, exc_info=True)
+                    logger.warning('Staging original upload transport retry attempt=%s try=%s',
+                                   aid, upload_attempt, exc_info=True)
                     time.sleep(min(2 ** upload_attempt, 8))
-            _set_status(db, aid, 'ready', path)
-            db.client.table(db.attempt_table).update({'overlay_queued_at':datetime.now(timezone.utc).isoformat()}).eq('id',aid).is_('overlay_queued_at','null').execute()
+            for update_attempt in range(1, 5):
+                try:
+                    _set_status(db, aid, 'ready', path)
+                    break
+                except httpx.TransportError:
+                    if update_attempt == 4:
+                        raise
+                    time.sleep(min(2 ** update_attempt, 8))
+            # Best effort: overlay selection already uses video_status=ready,
+            # so failure of this timestamp must never invalidate the original.
+            try:
+                db.client.table(db.attempt_table).update({
+                    'overlay_queued_at': datetime.now(timezone.utc).isoformat()
+                }).eq('id', aid).is_('overlay_queued_at', 'null').execute()
+            except httpx.TransportError:
+                logger.warning('Staging overlay queued timestamp failed attempt=%s; overlay remains eligible', aid)
         await asyncio.to_thread(upload)
+    except httpx.TransportError:
+        # Transient network failures are not permanent video failures.
+        # Leave the row pending for a later loop iteration.
+        logger.warning('Staging original archive transport deferred attempt=%s', aid, exc_info=True)
     except Exception:
         logger.exception('Staging video archive failed attempt=%s', aid)
         await asyncio.to_thread(_set_status, db, aid, 'failed')
