@@ -104,8 +104,11 @@ async def process_attempt(application, settings, db, attempt):
         if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
             raise ValueError('Downloaded video note is empty')
 
+        digest = hashlib.sha256()
         with open(temp_path, 'rb') as video_file:
-            media_digest = hashlib.sha256(video_file.read()).hexdigest()
+            for chunk in iter(lambda: video_file.read(1024 * 1024), b''):
+                digest.update(chunk)
+        media_digest = digest.hexdigest()
         media_size = os.path.getsize(temp_path)
 
         analysis_started = time.monotonic()
