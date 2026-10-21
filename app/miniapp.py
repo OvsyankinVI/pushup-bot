@@ -86,7 +86,7 @@ async def data(request: Request, authorization: str | None = Header(None),
         offset = 0
         while True:
             batch = (db.client.table('pushup_attempts')
-                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status')
+                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status,overlay_video_path,overlay_video_status')
                      .eq('chat_id', chat_id).eq('status', 'accepted')
                      .order('id').range(offset, offset + 499).execute().data)
             rows.extend(batch)
