@@ -281,6 +281,7 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     _ensure_mediapipe_runtime();model=_ensure_model();capture=cv2.VideoCapture(video_path)
     if not capture.isOpened():raise ValueError('Video cannot be opened by OpenCV')
     source_fps=capture.get(cv2.CAP_PROP_FPS) or 25.0;every_n=max(1,round(source_fps/sample_fps));actual_fps=source_fps/every_n
+    overlay_frames=[]
     total=sampled=pose_frames=usable=0;visibility_sum=supporting_sum=0.0;left_score=right_score=0.0;left_frames=right_frames=0
     geometry_frames=horizontal_frames=vertical_frames=straight_frames=pushup_like_frames=0
     world_results=[]
@@ -297,9 +298,10 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
                 sampled+=1;result=landmarker.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB,data=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)),int(idx*1000/source_fps))
                 if world_result_consumer is not None: world_results.append(result.pose_world_landmarks[0] if result.pose_world_landmarks else None)
                 if not result.pose_landmarks:
+                    overlay_frames.append(None)
                     for v in signals.values():v.append(None)
                     continue
-                pose_frames+=1;lm=result.pose_landmarks[0];lc=[lm[i].visibility for i in (11,13,23)];rc=[lm[i].visibility for i in (12,14,24)];lmmean=sum(lc)/3;rmmean=sum(rc)/3
+                pose_frames+=1;lm=result.pose_landmarks[0];overlay_frames.append({str(i):[round(lm[i].x,4),round(lm[i].y,4),round(lm[i].visibility,2)] for i in (11,12,13,14,15,16) if lm[i].visibility>=.25});lc=[lm[i].visibility for i in (11,13,23)];rc=[lm[i].visibility for i in (12,14,24)];lmmean=sum(lc)/3;rmmean=sum(rc)/3
                 visibility_sum+=max(lmmean,rmmean);supporting=[lm[i].visibility for i in SUPPORTING];supporting_sum+=sum(supporting)/len(supporting);lok=min(lc)>=.25 and lmmean>=.45;rok=min(rc)>=.25 and rmmean>=.45
                 if lok:left_score+=lmmean;left_frames+=1
                 if rok:right_score+=rmmean;right_frames+=1
@@ -539,4 +541,5 @@ def analyze_pose_visibility(video_path:str,sample_fps:float=6.0, world_result_co
     }
     output={'total_frames':total,'sampled_frames':sampled,'pose_frames':pose_frames,'usable_frames':usable,'pose_ratio':pose_frames/sampled,'usable_ratio':usable/sampled,'mean_visibility':visibility_sum/pose_frames if pose_frames else 0.0,'supporting_visibility':supporting_sum/pose_frames if pose_frames else 0.0,'pushup_count':count,'selected_signal':selected,'signal_agreement':agreement,'candidates':candidates,'front_cycles':front_cycles,'head_shadow':head_shadow,'angle_shadow':angle_shadow,'full_cycle_shadow':full_cycle_shadow,'single_arm_shadow':single_arm_shadow,'motion_consistency':motion_consistency,'signal_reliability':signal_reliability,'repetition_validation':repetition_validation,'dominant_side':dominant_side or 'balanced','motion_amplitude':next(c['amplitude'] for c in candidates if c['name']=='body_y'),'elbow_angle_range':max((c['amplitude'] for c in candidates if 'angle' in c['name']),default=0.0),'actual_sample_fps':actual_fps,'geometry':geometry}
     if world_result_consumer is not None: output['world_geometry']=world_result_consumer(world_results,actual_fps)
+    output['overlay_trace']={'schema':1,'fps':round(actual_fps,3),'frames':overlay_frames,'joints':'shoulder_elbow_wrist','source':'same_initial_pose_pass'}
     return output
