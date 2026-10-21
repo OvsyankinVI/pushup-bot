@@ -195,11 +195,13 @@ async def _process_overlay(db, cutoff, analysis_lock=None):
                     'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
                     'overlay_error':'render_failed_see_logs'
                 }).eq('id',row['id']).execute())
+    return bool(rows)
 
 
 async def media_loop(bot, db, analysis_lock=None):
     """Independent low-concurrency archival loop; failures never block results."""
     while True:
+        had_work = False
         try:
             cutoff = today_moscow() - timedelta(days=4)
             expired = await asyncio.to_thread(_expired, db, cutoff)
@@ -209,11 +211,10 @@ async def media_loop(bot, db, analysis_lock=None):
             pending = await asyncio.to_thread(_pending, db, cutoff)
             for attempt in pending:
                 await _archive_one(bot, db, attempt)
-            await _process_overlay(db, cutoff, analysis_lock)
+            had_work = bool(pending) or await _process_overlay(db, cutoff, analysis_lock)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception('Staging media loop error')
-        # Avoid a 30-second idle gap after every completed overlay.
-        # Keep the original idle interval when no archival work is queued.
-        await asyncio.sleep(2 if pending else 5 if 'pending' in locals() else 30)
+        # Drain a backlog quickly; retain the original 30s idle polling interval.
+        await asyncio.sleep(2 if had_work else 30)
