@@ -31,9 +31,18 @@ async def _archive_one(bot, db, attempt):
             local = handle.name
         await f.download_to_drive(custom_path=local)
         def upload():
-            with open(local, 'rb') as source:
-                db.client.storage.from_(BUCKET).upload(
-                    path, source, {'content-type': 'video/mp4', 'upsert': 'true'})
+            import httpx
+            for upload_attempt in range(1, 5):
+                try:
+                    with open(local, 'rb') as source:
+                        db.client.storage.from_(BUCKET).upload(
+                            path, source, {'content-type': 'video/mp4', 'upsert': 'true'})
+                    break
+                except httpx.TransportError:
+                    if upload_attempt == 4:
+                        raise
+                    logger.warning('Staging original upload transport retry attempt=%s try=%s', aid, upload_attempt, exc_info=True)
+                    time.sleep(min(2 ** upload_attempt, 8))
             _set_status(db, aid, 'ready', path)
             db.client.table(db.attempt_table).update({'overlay_queued_at':datetime.now(timezone.utc).isoformat()}).eq('id',aid).is_('overlay_queued_at','null').execute()
         await asyncio.to_thread(upload)
@@ -103,8 +112,7 @@ def _render_overlay(db, row):
     started=datetime.now(timezone.utc)
     start_clock=time.monotonic()
     db.client.table(db.attempt_table).update({
-        'overlay_started_at':started.isoformat(),
-        'overlay_error':None
+        'overlay_started_at':started.isoformat()
     }).eq('id',aid).execute()
     with tempfile.TemporaryDirectory(prefix='overlay_') as folder:
         src=os.path.join(folder,'original.mp4')
@@ -133,6 +141,7 @@ def _render_overlay(db, row):
                 time.sleep(2 * upload_attempt)
         db.client.table(db.attempt_table).update({
             'overlay_video_path':target,'overlay_video_status':'ready',
+            'overlay_error':None,
             'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
             'overlay_render_seconds':round(time.monotonic()-start_clock,3)
         }).eq('id',aid).execute()
