@@ -30,11 +30,21 @@ def _memory_mb():
         return 0, 0
 
 
+def _container_memory_mb():
+    """Read cgroup v2 memory usage (includes child processes and native allocations)."""
+    try:
+        with open('/sys/fs/cgroup/memory.current', encoding='ascii') as handle:
+            current = int(handle.read().strip()) / (1024 * 1024)
+        return round(current, 1)
+    except (OSError, ValueError):
+        return None
+
+
 async def _sample_memory(attempt_id, readings):
     while True:
         rss, hwm = _memory_mb()
         readings.append(rss)
-        logger.info('Pushup resource sample attempt=%s rss_mb=%.1f hwm_mb=%.1f', attempt_id, rss, hwm)
+        logger.info('Pushup resource sample attempt=%s rss_mb=%.1f hwm_mb=%.1f container_mb=%s', attempt_id, rss, hwm, _container_memory_mb())
         await asyncio.sleep(1)
 
 
@@ -80,8 +90,8 @@ async def _isolated_pose_analysis(video_path, attempt_id, timeout=120):
             await task
         except asyncio.CancelledError:
             pass
-        logger.info('Pushup isolated child attempt=%s child_peak_rss_mb=%.1f parent_rss_mb=%.1f combined_estimate_mb=%.1f child_exit=%s',
-                    attempt_id, peak_child_mb, _memory_mb()[0], peak_child_mb + _memory_mb()[0], proc.returncode)
+        logger.info('Pushup isolated child attempt=%s child_peak_rss_mb=%.1f parent_rss_mb=%.1f combined_estimate_mb=%.1f container_mb=%s child_exit=%s',
+                    attempt_id, peak_child_mb, _memory_mb()[0], peak_child_mb + _memory_mb()[0], _container_memory_mb(), proc.returncode)
 
 
 async def process_attempt(application, settings, db, attempt):
