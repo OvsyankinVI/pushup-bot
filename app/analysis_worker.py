@@ -75,8 +75,11 @@ async def process_attempt(application, settings, db, attempt):
         if not os.path.isfile(temp_path) or os.path.getsize(temp_path) <= 0:
             raise ValueError('Downloaded video note is empty')
 
+        digest = hashlib.sha256()
         with open(temp_path, 'rb') as video_file:
-            media_digest = hashlib.sha256(video_file.read()).hexdigest()
+            for chunk in iter(lambda: video_file.read(1024 * 1024), b''):
+                digest.update(chunk)
+        media_digest = digest.hexdigest()
         media_size = os.path.getsize(temp_path)
 
         metrics = await _isolated_pose_analysis(temp_path, attempt_id)
@@ -85,6 +88,18 @@ async def process_attempt(application, settings, db, attempt):
         status = classification['status']
         reason = classification['reason']
         count = int(classification.get('count') or 0)
+        # Persist overlay trace best-effort; never block or alter the scored result.
+        try:
+            overlay_trace = metrics.get('overlay_trace')
+            if overlay_trace:
+                await asyncio.to_thread(lambda: db.client.table('pushup_overlay_diagnostics').upsert({
+                    'attempt_id': attempt_id,
+                    'trace': overlay_trace,
+                    'classification': {'status': status, 'reason': reason, 'count': count,
+                                       'world_geometry': {'segment_details': world.get('segment_details')}}
+                }).execute())
+        except Exception as exc:
+            logger.warning('Production overlay trace persistence failed attempt=%s error=%s', attempt_id, type(exc).__name__)
         confidence = round(float(metrics.get('usable_ratio') or 0), 4)
         front = metrics.get('front_cycles') or {}
         logger.info(
@@ -181,12 +196,16 @@ async def process_attempt(application, settings, db, attempt):
             except OSError as exc: log_exception(logger,'Temporary video cleanup failed',exc,settings)
 
 
-async def worker_loop(application, settings, db):
+async def worker_loop(application, settings, db, analysis_lock=None):
     while True:
         try:
             attempt = await asyncio.to_thread(db.claim_next_pushup_attempt)
             if attempt:
-                await process_attempt(application,settings,db,attempt)
+                if analysis_lock is None:
+                    await process_attempt(application,settings,db,attempt)
+                else:
+                    async with analysis_lock:
+                        await process_attempt(application,settings,db,attempt)
                 continue
         except asyncio.CancelledError:
             raise
