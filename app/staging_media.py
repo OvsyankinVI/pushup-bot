@@ -205,12 +205,15 @@ async def media_loop(bot, db, analysis_lock=None):
             expired = await asyncio.to_thread(_expired, db, cutoff)
             if expired:
                 await asyncio.to_thread(_cleanup, db, expired)
-            await _process_overlay(db, cutoff, analysis_lock)
+            # Archive originals first, then render; prioritize recognition via analysis_lock.
             pending = await asyncio.to_thread(_pending, db, cutoff)
             for attempt in pending:
                 await _archive_one(bot, db, attempt)
+            await _process_overlay(db, cutoff, analysis_lock)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception('Staging media loop error')
-        await asyncio.sleep(30)
+        # Avoid a 30-second idle gap after every completed overlay.
+        # Keep the original idle interval when no archival work is queued.
+        await asyncio.sleep(2 if pending else 5 if 'pending' in locals() else 30)
