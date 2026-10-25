@@ -121,13 +121,14 @@ async def send_summary(request, secret, kind):
     try:
         members, reported, totals = await asyncio.to_thread(
             request.app.state.db.summary_data, settings.telegram_chat_id, day)
+        norm = await asyncio.to_thread(request.app.state.db.daily_norm, settings.telegram_chat_id)
         if kind == 'midnight' and all(
-                member['telegram_user_id'] in reported for member in members):
+                totals.get(member['telegram_user_id'], 0) >= norm for member in members):
             return {'status': 'ok', 'report_date': day.isoformat()}
         manual = await asyncio.to_thread(request.app.state.db.manual_totals, settings.telegram_chat_id, day)
         await request.app.state.telegram.bot.send_message(
             chat_id=settings.telegram_chat_id,
-            text=format_summary(members, reported, day, kind, totals, manual))
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
     except Exception as exc:
         log_exception(logger, 'Summary failed', exc, settings)
         label = 'вечерней сводки (21:00)' if kind == 'evening' else 'ночной сводки (00:00)'
