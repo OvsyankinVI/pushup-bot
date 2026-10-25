@@ -225,7 +225,7 @@ async def update_daily_norm(request: Request, authorization: str | None = Header
         try:
             await request.app.state.telegram.bot.send_message(
                 chat_id=chat_id,
-                text=f'⚙️ Суточная норма обновлена!\\nБыло: {old} отж.\\nСтало: {norm} отж.\\nИзменил: {name}')
+                text=f'⚙️ Суточная норма обновлена!\nБыло: {old} отж.\nСтало: {norm} отж.\nИзменил: {name}')
         except Exception:
             notified = False
             logger.exception('Daily norm saved but notification failed')
