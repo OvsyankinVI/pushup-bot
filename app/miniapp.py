@@ -202,6 +202,39 @@ async def data(request: Request, authorization: str | None = Header(None),
     return result
 
 
+@router.post('/api/miniapp/send-summary')
+async def send_manual_summary(request: Request, authorization: str | None = Header(None)):
+    user_id, chat_id, db = authenticate(request, authorization)
+    settings = request.app.state.settings
+    if settings.admin_telegram_id is None or user_id != settings.admin_telegram_id:
+        raise HTTPException(403, 'Только администратор может отправлять сводки')
+    try:
+        payload = await request.json()
+        kind = payload.get('kind')
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'Неверный тип сводки') from None
+    if kind not in ('evening', 'midnight'):
+        raise HTTPException(400, 'Неверный тип сводки')
+
+    from app.summaries import format_summary, midnight_report_date
+    day = midnight_report_date() if kind == 'midnight' else today_moscow()
+    try:
+        members, reported, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
+        norm = await asyncio.to_thread(db.daily_norm, chat_id)
+        # Match the scheduled midnight behavior: do not send if everyone completed.
+        if kind == 'midnight' and all(
+                totals.get(m['telegram_user_id'], 0) >= norm for m in members):
+            return {'sent': False, 'reason': 'all_completed', 'report_date': day.isoformat()}
+        manual = await asyncio.to_thread(db.manual_totals, chat_id, day)
+        await request.app.state.telegram.bot.send_message(
+            chat_id=chat_id,
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
+    except Exception:
+        logger.exception('Manual scheduled summary failed')
+        raise HTTPException(503, 'Не удалось отправить сводку') from None
+    return {'sent': True, 'report_date': day.isoformat()}
+
+
 @router.post('/api/miniapp/daily-norm')
 async def update_daily_norm(request: Request, authorization: str | None = Header(None)):
     user_id, chat_id, db = authenticate(request, authorization)
