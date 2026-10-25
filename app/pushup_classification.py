@@ -52,6 +52,30 @@ def classify_pushup_attempt(metrics: dict) -> dict:
         return {'status':'accepted','reason':'front_view_dual_arm_2d_cycles',
                 'count':paired}
 
+    # Front-on floor-level camera: world-space horizontal ratio can be
+    # underestimated when legs are outside the frame. Accept only sustained,
+    # synchronized dual-arm 2D cycles inside one coherent horizontal segment.
+    # A moving head/torso alone is never sufficient.
+    paired_details=(front.get('paired') or {}).get('details') or []
+    long_segments=[seg for seg in (world.get('segment_details') or [])
+                   if seg.get('counted', True)
+                   and float(seg.get('end_s') or 0)-float(seg.get('start_s') or 0)>=12
+                   and float(seg.get('strict_horizontal_ratio') or 0)>=.50
+                   and float(seg.get('elbow_range') or 0)>=25
+                   and float(seg.get('motion_coupling') or 0)>=.45
+                   and float(seg.get('median_verticality') or 1)<=.60]
+    if (temporal_count == 0 and usable >= .75 and pose >= .75
+            and lc >= 8 and rc >= 8 and paired >= 8
+            and abs(lc-rc) <= max(3, round(max(lc,rc)*.20))):
+        for seg in long_segments:
+            start=float(seg['start_s']);end=float(seg['end_s'])
+            synchronized=[d for d in paired_details
+                          if start <= float(d.get('time') or -1) <= end]
+            if len(synchronized)>=8 and len(synchronized)>=round(paired*.75):
+                return {'status':'accepted',
+                        'reason':'front_view_sustained_dual_arm_cycles',
+                        'count':len(synchronized)}
+
     if legacy_count == 0 and usable >= 0.65 and pose >= 0.75:
         return {'status':'rejected','reason':'no_pushup_cycles_detected','count':0}
 

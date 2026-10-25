@@ -63,7 +63,7 @@ def promotion_message(before: int | None, after: int | None) -> str | None:
 
 def format_summary(members: list[dict], reported: set[int], report_date: date,
                    kind: str = 'today', pushup_totals: dict[int, int] | None = None,
-                   manual_totals: dict[int, int] | None = None) -> str:
+                   manual_totals: dict[int, int] | None = None, daily_norm: int | None = None) -> str:
     titles = {
         'today': '🏋️ Сегодня',
         'evening': '🏋️ Промежуточная сводка',
@@ -85,9 +85,14 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     manual_sum = sum(manual_totals.get(m['telegram_user_id'], 0) for m in members)
     lines.extend(['', f'Отжались: {completed}/{len(members)}',
                   f'🏋️ Всего отжиманий: {total-manual_sum} (+{manual_sum}) = {total}' if manual_sum else f'🏋️ Всего отжиманий: {total}'])
-    # Penalty reminders retain the original video-submission criterion.
-    if kind != 'today' and len(reported.intersection(
-            {member['telegram_user_id'] for member in members})) < len(members):
+    # Daily quota is based on accepted pushups, including manual adjustments.
+    incomplete = ([m for m in members if totals.get(m['telegram_user_id'], 0) < daily_norm]
+                  if daily_norm is not None else
+                  [m for m in members if m['telegram_user_id'] not in reported])
+    if daily_norm is not None:
+        lines.append(f'🎯 Суточная норма: {daily_norm} отж.')
+        lines.append(f'✅ Выполнили норму: {len(members) - len(incomplete)}/{len(members)}')
+    if kind != 'today' and incomplete:
         lines.extend(['', '👀 Кажется, кто-то филонит.' if kind == 'evening'
                       else '💸 Кажется, у нас появились должники.'])
     return '\n'.join(lines)
@@ -140,3 +145,22 @@ def overtaken_message(before: dict[int, int], after: dict[int, int],
         return None
     return (f"👀 {names[former_id]}, тебя обогнали! "
             f"Ещё {new_score - after.get(former_id, 0) + 1} отж. — и вернёшь первое место!")
+
+
+def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int) -> str:
+    progress = sorted(
+        ((m['display_name'], max(0, int(totals.get(m['telegram_user_id'], 0))))
+         for m in members),
+        key=lambda item: (item[1] >= norm, -(max(0, norm - item[1])), item[0].casefold()))
+    pending = [(name, done, norm - done) for name, done in progress if done < norm]
+    if not pending:
+        return f'🎯 Суточная норма: {norm} отж.\n✅ Все участники выполнили норму!'
+    lines = [f'💸 До выполнения суточной нормы ({norm} отж.):', '']
+    for name, done in progress:
+        if done < norm:
+            lines.append(f'❌ {name} — {done}/{norm} (осталось {norm - done})')
+        else:
+            lines.append(f'✅ {name} — {done}/{norm} (норма выполнена)')
+    lines.extend(['', f'👥 Не выполнили: {len(pending)}/{len(members)}',
+                  f'🏋️ Всего осталось: {sum(x[2] for x in pending)} отж.'])
+    return '\n'.join(lines)

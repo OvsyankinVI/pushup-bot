@@ -10,7 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from app.pose_analysis import analyze_pose_visibility
 from app.pushup_classification import classify_pushup_attempt
 from app.safe_logging import log_exception
-from app.summaries import format_summary, today_moscow, weekly_summary
+from app.summaries import format_summary, format_daily_debt, today_moscow, weekly_summary
 from app.world_pose_analysis import analyze_world_landmarks
 
 logger=logging.getLogger(__name__);update_failed=ContextVar('update_failed',default=False)
@@ -56,6 +56,14 @@ def build_application(settings,db):
     async def today(update,context):
         if not await group_only(update):return
         day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual))
+    async def debt(update, context):
+        if not await group_only(update):return
+        day = today_moscow()
+        chat_id = update.effective_chat.id
+        rows, _, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
+        norm = await asyncio.to_thread(db.daily_norm, chat_id)
+        await update.message.reply_text(format_daily_debt(rows, totals, norm))
+
     async def week(update,context):
         if not await group_only(update):return
         day=today_moscow()
@@ -133,12 +141,13 @@ def build_application(settings,db):
                 return  # Duplicate webhook update: do not grant extra credit.
         await asyncio.to_thread(db.record, chat_id, user.id, day)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
-    for command,callback in [('start',start),('app',app_command),('join',join),('members',members),('today',today),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
+    for command,callback in [('start',start),('app',app_command),('join',join),('members',members),('today',today),('debt',debt),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     async def setup_commands():
         await application.bot.set_my_commands([
             BotCommand('app', 'Открыть Отжиматор'),
             BotCommand('join', 'Присоединиться'),
             BotCommand('today', 'Рейтинг за сегодня'),
+            BotCommand('debt', 'Кому осталось выполнить норму'),
             BotCommand('week', 'Рейтинг за неделю'),
             BotCommand('stats', 'Мои достижения'),
             BotCommand('members', 'Участники'),
