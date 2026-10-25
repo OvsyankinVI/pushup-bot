@@ -154,7 +154,7 @@ def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int) ->
         key=lambda item: (item[1] >= norm, -(max(0, norm - item[1])), item[0].casefold()))
     pending = [(name, done, norm - done) for name, done in progress if done < norm]
     if not pending:
-        return f'🎯 Суточная норма: {norm} отж.\\n✅ Все участники выполнили норму!'
+        return f'🎯 Суточная норма: {norm} отж.\n✅ Все участники выполнили норму!'
     lines = [f'💸 До выполнения суточной нормы ({norm} отж.):', '']
     for name, done in progress:
         if done < norm:
@@ -163,4 +163,4 @@ def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int) ->
             lines.append(f'✅ {name} — {done}/{norm} (норма выполнена)')
     lines.extend(['', f'👥 Не выполнили: {len(pending)}/{len(members)}',
                   f'🏋️ Всего осталось: {sum(x[2] for x in pending)} отж.'])
-    return '\\n'.join(lines)
+    return '\n'.join(lines)
