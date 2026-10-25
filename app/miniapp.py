@@ -174,6 +174,7 @@ async def data(request: Request, authorization: str | None = Header(None),
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
             'daily_norm': db.daily_norm(chat_id),
+            'is_admin': request.app.state.settings.admin_telegram_id is not None and user_id == request.app.state.settings.admin_telegram_id,
             'date': day.isoformat(), 'selected_date': chosen.isoformat(),
             'attempts': own_attempts, 'viewed_attempts': viewed_attempts, 'viewed_id': viewed_id,
             'selected_total': base_selected[user_id] + manual_selected[user_id],
@@ -204,6 +205,8 @@ async def data(request: Request, authorization: str | None = Header(None),
 @router.post('/api/miniapp/daily-norm')
 async def update_daily_norm(request: Request, authorization: str | None = Header(None)):
     user_id, chat_id, db = authenticate(request, authorization)
+    if request.app.state.settings.admin_telegram_id is None or user_id != request.app.state.settings.admin_telegram_id:
+        raise HTTPException(403, 'Изменять суточную норму может только администратор')
     try:
         payload = await request.json()
         norm = payload.get('daily_norm')
