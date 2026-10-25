@@ -157,6 +157,8 @@ async def data(request: Request, authorization: str | None = Header(None),
         return {
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
+            'daily_norm': db.daily_norm(chat_id),
+            'is_admin': request.app.state.settings.admin_telegram_id is not None and user_id == request.app.state.settings.admin_telegram_id,
             'date': day.isoformat(), 'selected_date': chosen.isoformat(),
             'attempts': own_attempts, 'viewed_attempts': viewed_attempts, 'viewed_id': viewed_id,
             'selected_total': base_selected[user_id] + manual_selected[user_id],
@@ -178,6 +180,72 @@ async def data(request: Request, authorization: str | None = Header(None),
     if result is None:
         raise HTTPException(403, 'Сначала зарегистрируйся в чате через /join')
     return result
+
+
+@router.post('/api/miniapp/send-summary')
+async def send_manual_summary(request: Request, authorization: str | None = Header(None)):
+    user_id, chat_id, db = authenticate(request, authorization)
+    settings = request.app.state.settings
+    if settings.admin_telegram_id is None or user_id != settings.admin_telegram_id:
+        raise HTTPException(403, 'Только администратор может отправлять сводки')
+    try:
+        payload = await request.json()
+        kind = payload.get('kind')
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'Неверный тип сводки') from None
+    if kind not in ('evening', 'midnight'):
+        raise HTTPException(400, 'Неверный тип сводки')
+
+    from app.summaries import format_summary, midnight_report_date
+    day = midnight_report_date() if kind == 'midnight' else today_moscow()
+    try:
+        members, reported, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
+        norm = await asyncio.to_thread(db.daily_norm, chat_id)
+        # Match the scheduled midnight behavior: do not send if everyone completed.
+        if kind == 'midnight' and all(
+                totals.get(m['telegram_user_id'], 0) >= norm for m in members):
+            return {'sent': False, 'reason': 'all_completed', 'report_date': day.isoformat()}
+        manual = await asyncio.to_thread(db.manual_totals, chat_id, day)
+        await request.app.state.telegram.bot.send_message(
+            chat_id=chat_id,
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
+    except Exception:
+        logger.exception('Manual scheduled summary failed')
+        raise HTTPException(503, 'Не удалось отправить сводку') from None
+    return {'sent': True, 'report_date': day.isoformat()}
+
+
+@router.post('/api/miniapp/daily-norm')
+async def update_daily_norm(request: Request, authorization: str | None = Header(None)):
+    user_id, chat_id, db = authenticate(request, authorization)
+    if request.app.state.settings.admin_telegram_id is None or user_id != request.app.state.settings.admin_telegram_id:
+        raise HTTPException(403, 'Изменять суточную норму может только администратор')
+    try:
+        payload = await request.json()
+        norm = payload.get('daily_norm')
+        if type(norm) is not int or not 0 <= norm <= 10000:
+            raise ValueError('Invalid norm')
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'Укажите целое число от 0 до 10000') from None
+
+    def save():
+        member = db.member(chat_id, user_id)
+        if not member or not member.get('active'):
+            raise HTTPException(403, 'Сначала зарегистрируйтесь через /join')
+        old = db.set_daily_norm(chat_id, norm, user_id)
+        return old, member['display_name']
+
+    old, name = await asyncio.to_thread(save)
+    notified = True
+    if old != norm:
+        try:
+            await request.app.state.telegram.bot.send_message(
+                chat_id=chat_id,
+                text=f'⚙️ Суточная норма обновлена!\nБыло: {old} отж.\nСтало: {norm} отж.\nИзменил: {name}')
+        except Exception:
+            notified = False
+            logger.exception('Daily norm saved but notification failed')
+    return {'daily_norm': norm, 'previous_norm': old, 'notified': notified}
 
 
 @router.post('/api/miniapp/adjustment')
@@ -223,6 +291,13 @@ async def adjust(request: Request, authorization: str | None = Header(None)):
                 f"🤖 Бот: {bot_count} отж.\n"
                 f"📝 Вручную: +{previous} → +{adjustment}\n"
                 f"💪 Теперь: {bot_count} (+{adjustment}) = {bot_count + adjustment}")
+        # The updated accepted attempt is already included in daily_pushup_total.
+        report_day = date.fromisoformat(day)
+        daily_total = await asyncio.to_thread(db.daily_pushup_total, chat_id, user_id, report_day)
+        daily_norm = await asyncio.to_thread(db.daily_norm, chat_id)
+        remaining = max(0, daily_norm - daily_total)
+        text += (f"\\n🎯 До суточной нормы осталось: {remaining} отж."
+                 if remaining else f"\\n🎯 Суточная норма выполнена! ({daily_total}/{daily_norm})")
         try:
             await request.app.state.telegram.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=int(row['telegram_message']))
