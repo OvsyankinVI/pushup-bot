@@ -203,6 +203,21 @@ class Database:
                     'updated_at': datetime.now(timezone.utc).isoformat(),
                 }, on_conflict='chat_id').execute().data)
 
+    def daily_norm(self, chat_id: int) -> int:
+        rows = (self.client.table('daily_pushup_norms').select('daily_norm')
+                .eq('chat_id', chat_id).limit(1).execute().data)
+        return int(rows[0]['daily_norm']) if rows else 20
+
+    def set_daily_norm(self, chat_id: int, norm: int, user_id: int) -> int:
+        if not 0 <= norm <= 10000:
+            raise ValueError('Invalid daily norm')
+        previous = self.daily_norm(chat_id)
+        self.client.table('daily_pushup_norms').upsert({
+            'chat_id': chat_id, 'daily_norm': norm, 'updated_by': user_id,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }, on_conflict='chat_id').execute()
+        return previous
+
     def members(self, chat_id: int) -> list[dict]:
         return (self.client.table('members').select('*').eq('chat_id', chat_id)
                 .eq('active', True).order('display_name').execute().data)
