@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import time
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse
 BUCKET = 'pushup-production-media'
 from app.summaries import today_moscow
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
