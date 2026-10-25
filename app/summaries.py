@@ -92,7 +92,7 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     if daily_norm is not None:
         lines.append(f'🎯 Суточная норма: {daily_norm} отж.')
         lines.append(f'✅ Выполнили норму: {len(members) - len(incomplete)}/{len(members)}')
-            {member['telegram_user_id'] for member in members})) < len(members):
+    if kind != 'today' and incomplete:
         lines.extend(['', '👀 Кажется, кто-то филонит.' if kind == 'evening'
                       else '💸 Кажется, у нас появились должники.'])
     return '\n'.join(lines)
