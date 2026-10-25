@@ -196,7 +196,7 @@ async def send_manual_summary(request: Request, authorization: str | None = Head
     if kind not in ('evening', 'midnight'):
         raise HTTPException(400, 'Неверный тип сводки')
 
-    from app.summaries import format_summary, midnight_report_date
+    from app.summaries import format_summary, midnight_report_date, today_moscow
     day = midnight_report_date() if kind == 'midnight' else today_moscow()
     try:
         members, reported, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
@@ -296,8 +296,8 @@ async def adjust(request: Request, authorization: str | None = Header(None)):
         daily_total = await asyncio.to_thread(db.daily_pushup_total, chat_id, user_id, report_day)
         daily_norm = await asyncio.to_thread(db.daily_norm, chat_id)
         remaining = max(0, daily_norm - daily_total)
-        text += (f"\\n🎯 До суточной нормы осталось: {remaining} отж."
-                 if remaining else f"\\n🎯 Суточная норма выполнена! ({daily_total}/{daily_norm})")
+        text += (f"\n🎯 До суточной нормы осталось: {remaining} отж."
+                 if remaining else f"\n🎯 Суточная норма выполнена! ({daily_total}/{daily_norm})")
         try:
             await request.app.state.telegram.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=int(row['telegram_message']))
