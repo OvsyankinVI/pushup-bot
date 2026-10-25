@@ -173,6 +173,7 @@ async def data(request: Request, authorization: str | None = Header(None),
         return {
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
+            'daily_norm': db.daily_norm(chat_id),
             'date': day.isoformat(), 'selected_date': chosen.isoformat(),
             'attempts': own_attempts, 'viewed_attempts': viewed_attempts, 'viewed_id': viewed_id,
             'selected_total': base_selected[user_id] + manual_selected[user_id],
@@ -198,6 +199,37 @@ async def data(request: Request, authorization: str | None = Header(None),
     if result is None:
         raise HTTPException(403, 'Сначала зарегистрируйся в тестовом чате через /join')
     return result
+
+
+@router.post('/api/miniapp/daily-norm')
+async def update_daily_norm(request: Request, authorization: str | None = Header(None)):
+    user_id, chat_id, db = authenticate(request, authorization)
+    try:
+        payload = await request.json()
+        norm = payload.get('daily_norm')
+        if type(norm) is not int or not 0 <= norm <= 10000:
+            raise ValueError('Invalid norm')
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'Укажите целое число от 0 до 10000') from None
+
+    def save():
+        member = db.member(chat_id, user_id)
+        if not member or not member.get('active'):
+            raise HTTPException(403, 'Сначала зарегистрируйтесь через /join')
+        old = db.set_daily_norm(chat_id, norm, user_id)
+        return old, member['display_name']
+
+    old, name = await asyncio.to_thread(save)
+    notified = True
+    if old != norm:
+        try:
+            await request.app.state.telegram.bot.send_message(
+                chat_id=chat_id,
+                text=f'⚙️ Суточная норма обновлена!\\nБыло: {old} отж.\\nСтало: {norm} отж.\\nИзменил: {name}')
+        except Exception:
+            notified = False
+            logger.exception('Daily norm saved but notification failed')
+    return {'daily_norm': norm, 'previous_norm': old, 'notified': notified}
 
 
 @router.post('/api/miniapp/adjustment')
