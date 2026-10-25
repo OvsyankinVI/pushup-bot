@@ -211,6 +211,10 @@ async def process_attempt(application, settings, db, attempt):
                 text = f"❌ Отжимания не засчитаны\n📊 Всего за сегодня: {total}"
             else:
                 text = f"⚠️ Не удалось уверенно распознать отжимания\n📊 Всего за сегодня: {total}"
+            norm = await asyncio.to_thread(db.daily_norm, chat_id)
+            remaining = max(0, norm - total)
+            text += (f"\\n🎯 До суточной нормы осталось: {remaining} отж."
+                     if remaining else f"\\n🎯 Суточная норма выполнена! ({total}/{norm})")
             notices = ([medal_notice] if medal_notice else []) + reward_notices[:2]
             if notices:
                 text += '\n\n' + '\n'.join(notices)
