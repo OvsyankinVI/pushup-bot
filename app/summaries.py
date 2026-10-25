@@ -148,16 +148,19 @@ def overtaken_message(before: dict[int, int], after: dict[int, int],
 
 
 def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int) -> str:
-    pending = sorted(
-        ((m['display_name'], max(0, int(totals.get(m['telegram_user_id'], 0))),
-          max(0, norm - int(totals.get(m['telegram_user_id'], 0))))
-         for m in members if int(totals.get(m['telegram_user_id'], 0)) < norm),
-        key=lambda item: (-item[2], item[0].casefold()))
+    progress = sorted(
+        ((m['display_name'], max(0, int(totals.get(m['telegram_user_id'], 0))))
+         for m in members),
+        key=lambda item: (item[1] >= norm, -(max(0, norm - item[1])), item[0].casefold()))
+    pending = [(name, done, norm - done) for name, done in progress if done < norm]
     if not pending:
-        return f'🎯 Суточная норма: {norm} отж.\n✅ Все участники выполнили норму!'
+        return f'🎯 Суточная норма: {norm} отж.\\n✅ Все участники выполнили норму!'
     lines = [f'💸 До выполнения суточной нормы ({norm} отж.):', '']
-    lines.extend(f'• {name} — {done}/{norm} (осталось {left})'
-                 for name, done, left in pending)
+    for name, done in progress:
+        if done < norm:
+            lines.append(f'❌ {name} — {done}/{norm} (осталось {norm - done})')
+        else:
+            lines.append(f'✅ {name} — {done}/{norm} (норма выполнена)')
     lines.extend(['', f'👥 Не выполнили: {len(pending)}/{len(members)}',
                   f'🏋️ Всего осталось: {sum(x[2] for x in pending)} отж.'])
-    return '\n'.join(lines)
+    return '\\n'.join(lines)
