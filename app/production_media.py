@@ -80,41 +80,81 @@ async def _archive_one(bot, db, attempt):
 
 def _pending(db, cutoff):
     return (db.client.table('pushup_attempts')
-            .select('id,chat_id,telegram_file_id,report_date')
+            .select('id,chat_id,telegram_user_id,telegram_file_id,report_date')
             .gte('report_date', cutoff.isoformat())
             .in_('status', ['accepted', 'rejected', 'uncertain'])
             .eq('video_status', 'pending')
             .not_.is_('telegram_file_id', 'null')
-            .order('id').limit(5).execute().data)
+            .order('id', desc=True).limit(50).execute().data)
 
 
-def _expired(db, cutoff):
-    return (db.client.table('pushup_attempts')
-            .select('id,video_storage_path,overlay_video_path')
-            .lt('report_date', cutoff.isoformat())
-            .not_.is_('video_storage_path', 'null')
-            .limit(50).execute().data)
+def _latest_attempt_ids(db):
+    """Newest processed attempt per Telegram user; preserve score/history rows."""
+    latest = {}
+    offset = 0
+    while True:
+        rows = (db.client.table('pushup_attempts')
+                .select('id,telegram_user_id')
+                .in_('status', ['accepted', 'rejected', 'uncertain'])
+                .order('id', desc=True).range(offset, offset + 999).execute().data)
+        for row in rows:
+            latest.setdefault(row['telegram_user_id'], row['id'])
+        if len(rows) < 1000:
+            return latest
+        offset += 1000
 
 
-def _cleanup(db, rows):
-    for row in rows:
-        path = row['video_storage_path']
-        db.client.storage.from_(BUCKET).remove([p for p in (path,row.get('overlay_video_path')) if p])
-        db.client.table('pushup_attempts').update({
-            'video_status': 'expired', 'video_storage_path': None,
-            'overlay_video_status':'expired','overlay_video_path':None
-        }).eq('id', row['id']).eq('video_storage_path', path).execute()
+def _cleanup_superseded(db):
+    """Remove old media only after the newest attempt has BOTH videos ready.
 
+    Keep pushup_attempts and diagnostics for historical counts and corrections.
+    Storage removal happens before clearing paths so failures are retryable.
+    """
+    latest = _latest_attempt_ids(db)
+    offset = 0
+    ready_latest = set()
+    # Newest attempt is safe to replace previous media only when both
+    # original and annotated files have been committed to Storage.
+    for user_id, aid in latest.items():
+        rows = (db.client.table('pushup_attempts')
+                .select('video_status,overlay_video_status,video_storage_path,overlay_video_path')
+                .eq('id', aid).limit(1).execute().data)
+        if rows and rows[0].get('video_status') == 'ready' and rows[0].get('overlay_video_status') == 'ready' and rows[0].get('video_storage_path') and rows[0].get('overlay_video_path'):
+            ready_latest.add(user_id)
+    # Always read by id with keyset pagination: updates do not change row order.
+    last_id = 0
+    while True:
+        rows = (db.client.table('pushup_attempts')
+                .select('id,telegram_user_id,video_storage_path,overlay_video_path')
+                .gt('id', last_id)
+                .or_('video_storage_path.not.is.null,overlay_video_path.not.is.null')
+                .order('id').limit(100).execute().data)
+        if not rows:
+            break
+        last_id = rows[-1]['id']
+        for row in rows:
+            uid = row['telegram_user_id']
+            if uid not in ready_latest or row['id'] == latest[uid]:
+                continue
+            paths = list(dict.fromkeys(p for p in (row.get('video_storage_path'), row.get('overlay_video_path')) if p))
+            if paths:
+                db.client.storage.from_(BUCKET).remove(paths)
+            db.client.table('pushup_attempts').update({
+                'video_status': 'expired', 'video_storage_path': None,
+                'overlay_video_status': 'expired', 'overlay_video_path': None
+            }).eq('id', row['id']).execute()
+            logger.info('Removed superseded videos attempt=%s user=%s files=%s',
+                        row['id'], uid, len(paths))
 
 
 def _overlay_candidates(db, cutoff):
     return (db.client.table('pushup_attempts')
-            .select('id,video_storage_path')
+            .select('id,telegram_user_id,video_storage_path')
             .gte('report_date',cutoff.isoformat())
             .eq('video_status','ready')
             .eq('overlay_video_status','pending')
             .not_.is_('video_storage_path','null')
-            .order('id').limit(1).execute().data)
+            .order('id', desc=True).limit(50).execute().data)
 
 
 def _render_overlay(db, row):
@@ -171,7 +211,10 @@ def _render_overlay(db, row):
 
 async def _process_overlay(db, cutoff, analysis_lock=None):
     rows=await asyncio.to_thread(_overlay_candidates,db,cutoff)
+    latest = await asyncio.to_thread(_latest_attempt_ids, db)
     for row in rows:
+        if latest.get(row['telegram_user_id']) != row['id']:
+            continue
         try:
             if analysis_lock is None:
                 await asyncio.to_thread(_render_overlay,db,row)
@@ -225,14 +268,14 @@ async def media_loop(bot, db, analysis_lock=None):
         had_work = False
         try:
             cutoff = today_moscow() - timedelta(days=4)
-            expired = await asyncio.to_thread(_expired, db, cutoff)
-            if expired:
-                await asyncio.to_thread(_cleanup, db, expired)
+            latest = await asyncio.to_thread(_latest_attempt_ids, db)
             # Archive originals first, then render; prioritize recognition via analysis_lock.
             pending = await asyncio.to_thread(_pending, db, cutoff)
             for attempt in pending:
-                await _archive_one(bot, db, attempt)
+                if latest.get(attempt['telegram_user_id']) == attempt['id']:
+                    await _archive_one(bot, db, attempt)
             overlay_work = await _process_overlay(db, cutoff, analysis_lock)
+            await asyncio.to_thread(_cleanup_superseded, db)
             had_work = bool(pending) or overlay_work
         except asyncio.CancelledError:
             raise
