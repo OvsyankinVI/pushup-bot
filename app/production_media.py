@@ -111,7 +111,6 @@ def _cleanup_superseded(db):
     Storage removal happens before clearing paths so failures are retryable.
     """
     latest = _latest_attempt_ids(db)
-    offset = 0
     ready_latest = set()
     # Newest attempt is safe to replace previous media only when both
     # original and annotated files have been committed to Storage.
@@ -212,9 +211,11 @@ def _render_overlay(db, row):
 async def _process_overlay(db, cutoff, analysis_lock=None):
     rows=await asyncio.to_thread(_overlay_candidates,db,cutoff)
     latest = await asyncio.to_thread(_latest_attempt_ids, db)
+    worked = False
     for row in rows:
         if latest.get(row['telegram_user_id']) != row['id']:
             continue
+        worked = True
         try:
             if analysis_lock is None:
                 await asyncio.to_thread(_render_overlay,db,row)
@@ -259,11 +260,12 @@ async def _process_overlay(db, cutoff, analysis_lock=None):
                     'overlay_finished_at':datetime.now(timezone.utc).isoformat(),
                     'overlay_error':'render_failed_see_logs'
                 }).eq('id',row['id']).execute())
-    return bool(rows)
+    return worked
 
 
 async def media_loop(bot, db, analysis_lock=None):
     """Independent low-concurrency archival loop; failures never block results."""
+    last_cleanup = 0.0
     while True:
         had_work = False
         try:
@@ -271,12 +273,16 @@ async def media_loop(bot, db, analysis_lock=None):
             latest = await asyncio.to_thread(_latest_attempt_ids, db)
             # Archive originals first, then render; prioritize recognition via analysis_lock.
             pending = await asyncio.to_thread(_pending, db, cutoff)
+            processed_pending = False
             for attempt in pending:
                 if latest.get(attempt['telegram_user_id']) == attempt['id']:
+                    processed_pending = True
                     await _archive_one(bot, db, attempt)
             overlay_work = await _process_overlay(db, cutoff, analysis_lock)
-            await asyncio.to_thread(_cleanup_superseded, db)
-            had_work = bool(pending) or overlay_work
+            if overlay_work or time.monotonic() - last_cleanup >= 600:
+                await asyncio.to_thread(_cleanup_superseded, db)
+                last_cleanup = time.monotonic()
+            had_work = processed_pending or overlay_work
         except asyncio.CancelledError:
             raise
         except Exception:
