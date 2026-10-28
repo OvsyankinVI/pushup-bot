@@ -125,6 +125,20 @@ async def data(request: Request, authorization: str | None = Header(None),
                 week_start = d - timedelta(days=d.weekday())
                 weeks[week_start] += n + extra
                 best_single = max(best_single, n + extra)
+        # Daily Legend: first accepted single video reaching today's norm.
+        # Count only recognized repetitions in this attempt, never daily totals
+        # or manual adjustments. Order by submission time (id as tie-breaker).
+        daily_norm = db.daily_norm(chat_id)
+        legend = None
+        if daily_norm > 0:
+            eligible = [a for a in rows
+                        if a['report_date'] == day.isoformat()
+                        and int(a.get('pushup_count') or 0) >= daily_norm]
+            if eligible:
+                winner = min(eligible, key=lambda a: int(a['id']))
+                legend = {'user_id': int(winner['telegram_user_id']),
+                          'pushup_count': int(winner['pushup_count']),
+                          'attempt_id': int(winner['id'])}
         photo_rows = (db.client.table('member_photos').select('telegram_user_id,storage_path')
                       .eq('chat_id', chat_id).execute().data)
         photo_urls = {}
@@ -159,7 +173,8 @@ async def data(request: Request, authorization: str | None = Header(None),
         return {
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
-            'daily_norm': db.daily_norm(chat_id),
+            'daily_norm': daily_norm,
+            'legend': legend,
             'is_admin': request.app.state.settings.admin_telegram_id is not None and user_id == request.app.state.settings.admin_telegram_id,
             'date': day.isoformat(), 'selected_date': chosen.isoformat(),
             'attempts': own_attempts, 'viewed_attempts': viewed_attempts, 'viewed_id': viewed_id,
