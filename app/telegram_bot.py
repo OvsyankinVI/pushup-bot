@@ -39,8 +39,12 @@ def build_application(settings,db):
             InlineKeyboardButton('🚀 Открыть Отжиматор',
                 url='https://t.me/pushup_circle_bot/miniapp')
         ]])
-        await update.message.reply_text(
-            '💪 Отжиматор\\nРейтинг участников и личная статистика.',
+        # A delayed/retried webhook may refer to a deleted message. Sending a
+        # standalone message avoids Telegram BadRequest "Message to be replied not found"
+        # and prevents the webhook from returning 503 on every retry.
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text='💪 Отжиматор\\nРейтинг участников и личная статистика.',
             reply_markup=keyboard)
 
     async def myid(update,context):
