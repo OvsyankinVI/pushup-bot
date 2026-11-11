@@ -203,6 +203,26 @@ class Database:
                     'updated_at': datetime.now(timezone.utc).isoformat(),
                 }, on_conflict='chat_id').execute().data)
 
+    def forwarded_videos_enabled(self, chat_id: int) -> bool:
+        rows = (self.client.table('chat_settings')
+                .select('allow_forwarded_videos').eq('chat_id', chat_id)
+                .limit(1).execute().data)
+        return bool(rows and rows[0].get('allow_forwarded_videos'))
+
+    def set_forwarded_videos_enabled(self, chat_id: int, enabled: bool):
+        # UPDATE existing row to preserve other settings; INSERT if absent.
+        rows = (self.client.table('chat_settings').select('chat_id')
+                .eq('chat_id', chat_id).limit(1).execute().data)
+        if rows:
+            return (self.client.table('chat_settings')
+                    .update({'allow_forwarded_videos': enabled,
+                             'updated_at': datetime.now(timezone.utc).isoformat()})
+                    .eq('chat_id', chat_id).execute().data)
+        return (self.client.table('chat_settings').insert({
+            'chat_id': chat_id, 'allow_forwarded_videos': enabled,
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }).execute().data)
+
     def daily_norm(self, chat_id: int) -> int:
         rows = (self.client.table('daily_pushup_norms').select('daily_norm')
                 .eq('chat_id', chat_id).limit(1).execute().data)

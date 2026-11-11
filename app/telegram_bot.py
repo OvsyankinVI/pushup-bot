@@ -126,21 +126,46 @@ def build_application(settings,db):
     async def video_note(update,context):
         user=update.effective_user
         if not user or user.is_bot or update.message.sender_chat:return
-        # Reject explicit forwards for everyone, including bot administrators.
-        forwarded = (getattr(update.message, 'forward_origin', None) is not None
+        chat_id = update.effective_chat.id
+        origin = getattr(update.message, 'forward_origin', None)
+        forwarded = (origin is not None
                      or getattr(update.message, 'forward_date', None) is not None
                      or getattr(update.message, 'forward_from', None) is not None
                      or getattr(update.message, 'forward_from_chat', None) is not None)
-        if forwarded:
-            if settings.pushup_results_enabled:
-                await safe_reply(update.message, 
-                    '↪️ Пересланный кружок не засчитывается. Отправьте новый кружок прямо в эту группу.')
-            return
+        owner_id = user.id
         day = today_moscow()
-        chat_id = update.effective_chat.id
-        member = await asyncio.to_thread(db.member, chat_id, user.id)
-        if not member or not member['active']:
-            return
+        if forwarded:
+            if not await asyncio.to_thread(db.forwarded_videos_enabled, chat_id):
+                await safe_reply(update.message,
+                    '↪️ Пересылка кружков отключена администратором.')
+                return
+            # Telegram hides the original sender for privacy-protected forwards.
+            # Never credit the forwarding user or guess ownership from names.
+            original = getattr(origin, 'sender_user', None)
+            if original is None:
+                original = getattr(update.message, 'forward_from', None)
+            if original is None or getattr(original, 'is_bot', False):
+                await safe_reply(update.message,
+                    '❌ Не могу определить автора кружка: Telegram скрыл отправителя или это пересылка из канала. Отжимания не засчитаны.')
+                return
+            owner_id = original.id
+            original_member = await asyncio.to_thread(db.member, chat_id, owner_id)
+            if not original_member or not original_member.get('active'):
+                await safe_reply(update.message,
+                    '❌ Автор пересланного кружка не найден среди зарегистрированных участников чата. Отжимания не засчитаны.')
+                return
+            # Credit the day of the original video, not the date of forwarding.
+            from datetime import timezone
+            from zoneinfo import ZoneInfo
+            original_date = getattr(origin, 'date', None) or getattr(update.message, 'forward_date', None)
+            if original_date is not None:
+                if original_date.tzinfo is None:
+                    original_date = original_date.replace(tzinfo=timezone.utc)
+                day = original_date.astimezone(ZoneInfo('Europe/Moscow')).date()
+        else:
+            member = await asyncio.to_thread(db.member, chat_id, owner_id)
+            if not member or not member['active']:
+                return
         if settings.pushup_analysis_enabled:
             already_seen = await asyncio.to_thread(
                 db.previously_seen_video, chat_id,
@@ -150,11 +175,11 @@ def build_application(settings,db):
                     '♻️ Этот кружок уже присылали в чат. Повторные видео не засчитываются — запиши новый кружок!')
                 return
             attempt = await asyncio.to_thread(
-                db.enqueue_pushup_attempt, chat_id, user.id, day,
+                db.enqueue_pushup_attempt, chat_id, owner_id, day,
                 update.message.message_id, update.message.video_note.file_id)
             if attempt is None:
                 return  # Duplicate webhook update: do not grant extra credit.
-        await asyncio.to_thread(db.record, chat_id, user.id, day)
+        await asyncio.to_thread(db.record, chat_id, owner_id, day)
     async def error_handler(update,context):update_failed.set(True);log_exception(logger,'Telegram update failed',context.error,settings)
     for command,callback in [('start',start),('app',app_command),('join',join),('members',members),('today',today),('debt',debt),('week',week),('stats',stats),('results_on',results_on),('results_off',results_off),('chatid',chatid),('myid',myid)]:application.add_handler(CommandHandler(command,callback,filters=filters.UpdateType.MESSAGE))
     async def setup_commands():
