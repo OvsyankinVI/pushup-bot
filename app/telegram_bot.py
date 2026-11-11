@@ -5,6 +5,7 @@ import tempfile
 from contextvars import ContextVar
 
 from telegram import Update, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.pose_analysis import analyze_pose_visibility
@@ -16,16 +17,26 @@ from app.world_pose_analysis import analyze_world_landmarks
 logger=logging.getLogger(__name__);update_failed=ContextVar('update_failed',default=False)
 def is_admin(user_id,settings)->bool:return settings.admin_telegram_id is not None and user_id==settings.admin_telegram_id
 
+async def safe_reply(message, text, **kwargs):
+    """Avoid blocking the webhook when Telegram no longer has the source message."""
+    try:
+        return await message.reply_text(text, **kwargs)
+    except BadRequest as exc:
+        if 'message to be replied not found' not in str(exc).lower():
+            raise
+        return await message.get_bot().send_message(
+            chat_id=message.chat_id, text=text, **kwargs)
+
 def build_application(settings,db):
     application=Application.builder().token(settings.telegram_bot_token).updater(None).job_queue(None).build()
     async def group_only(update):
         if not update.message:return False
-        if update.effective_chat.type not in ('group','supergroup'):await update.message.reply_text('Эта команда доступна только в группе.');return False
+        if update.effective_chat.type not in ('group','supergroup'):await safe_reply(update.message, 'Эта команда доступна только в группе.');return False
         return True
     async def start(update, context):
-        await update.message.reply_text('🏋️ Бот отжиманий на связи!')
+        await safe_reply(update.message, '🏋️ Бот отжиманий на связи!')
         if update.effective_chat.type == 'private':
-            await update.message.reply_text(
+            await safe_reply(update.message, 
                 '💪 Рейтинг и личная статистика:',
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton(
@@ -48,25 +59,25 @@ def build_application(settings,db):
             reply_markup=keyboard)
 
     async def myid(update,context):
-        if update.effective_user is not None and not update.message.sender_chat:await update.message.reply_text(f'🆔 Ваш Telegram ID: {update.effective_user.id}')
+        if update.effective_user is not None and not update.message.sender_chat:await safe_reply(update.message, f'🆔 Ваш Telegram ID: {update.effective_user.id}')
     async def join(update,context):
         if not await group_only(update):return
         user=update.effective_user
-        if not user or user.is_bot or update.message.sender_chat:await update.message.reply_text('Отправьте /join от своего личного аккаунта.');return
-        created=await asyncio.to_thread(db.join,update.effective_chat.id,user.id,user.username,user.full_name);await update.message.reply_text('✅ Вы зарегистрированы!' if created else 'Вы уже зарегистрированы. Данные обновлены.')
+        if not user or user.is_bot or update.message.sender_chat:await safe_reply(update.message, 'Отправьте /join от своего личного аккаунта.');return
+        created=await asyncio.to_thread(db.join,update.effective_chat.id,user.id,user.username,user.full_name);await safe_reply(update.message, '✅ Вы зарегистрированы!' if created else 'Вы уже зарегистрированы. Данные обновлены.')
     async def members(update,context):
         if not await group_only(update):return
-        rows=await asyncio.to_thread(db.members,update.effective_chat.id);text=('👥 Участники:\n\n'+'\n'.join(f"• {m['display_name']}" for m in rows)+f'\n\nВсего: {len(rows)}') if rows else 'Участников пока нет. Используйте /join.';await update.message.reply_text(text)
+        rows=await asyncio.to_thread(db.members,update.effective_chat.id);text=('👥 Участники:\n\n'+'\n'.join(f"• {m['display_name']}" for m in rows)+f'\n\nВсего: {len(rows)}') if rows else 'Участников пока нет. Используйте /join.';await safe_reply(update.message, text)
     async def today(update,context):
         if not await group_only(update):return
-        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);await update.message.reply_text(format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual))
+        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);await safe_reply(update.message, format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual))
     async def debt(update, context):
         if not await group_only(update):return
         day = today_moscow()
         chat_id = update.effective_chat.id
         rows, _, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
         norm = await asyncio.to_thread(db.daily_norm, chat_id)
-        await update.message.reply_text(format_daily_debt(rows, totals, norm))
+        await safe_reply(update.message, format_daily_debt(rows, totals, norm))
 
     async def week(update,context):
         if not await group_only(update):return
@@ -76,17 +87,17 @@ def build_application(settings,db):
         members=await asyncio.to_thread(db.members,update.effective_chat.id)
         totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
         manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,start,start+timedelta(days=6))
-        await update.message.reply_text(weekly_summary(members,totals,start,manual))
+        await safe_reply(update.message, weekly_summary(members,totals,start,manual))
     async def stats(update, context):
         if not await group_only(update):return
         user = update.effective_user
         if not user or user.is_bot or update.message.sender_chat:return
         member = await asyncio.to_thread(db.member, update.effective_chat.id, user.id)
         if not member or not member.get('active'):
-            await update.message.reply_text('Сначала зарегистрируйтесь через /join.')
+            await safe_reply(update.message, 'Сначала зарегистрируйтесь через /join.')
             return
         values = await asyncio.to_thread(db.personal_stats, update.effective_chat.id, user.id, today_moscow())
-        await update.message.reply_text(
+        await safe_reply(update.message, 
             f"🏆 Достижения: {member['display_name']}\n\n"
             f"💪 Всего отжиманий: {values['total']}\n"
             f"📅 За текущую неделю: {values['this_week']}\n"
@@ -96,22 +107,22 @@ def build_application(settings,db):
     async def results_on(update,context):
         if not await group_only(update):return
         if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
-            await update.message.reply_text('Команда доступна только администратору бота.');return
+            await safe_reply(update.message, 'Команда доступна только администратору бота.');return
         await asyncio.to_thread(db.set_result_replies_enabled,update.effective_chat.id,True)
-        await update.message.reply_text('🔔 Ответы на кружки включены.')
+        await safe_reply(update.message, '🔔 Ответы на кружки включены.')
 
     async def results_off(update,context):
         if not await group_only(update):return
         if update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):
-            await update.message.reply_text('Команда доступна только администратору бота.');return
+            await safe_reply(update.message, 'Команда доступна только администратору бота.');return
         await asyncio.to_thread(db.set_result_replies_enabled,update.effective_chat.id,False)
-        await update.message.reply_text('🔕 Ответы на кружки выключены. Отжимания продолжают считаться.')
+        await safe_reply(update.message, '🔕 Ответы на кружки выключены. Отжимания продолжают считаться.')
 
     async def chatid(update,context):
         if not await group_only(update):return
-        if settings.admin_telegram_id is None:await update.message.reply_text('Администратор не настроен: ADMIN_TELEGRAM_ID.')
-        elif update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):await update.message.reply_text('Команда доступна только администратору бота.')
-        else:await update.message.reply_text(str(update.effective_chat.id))
+        if settings.admin_telegram_id is None:await safe_reply(update.message, 'Администратор не настроен: ADMIN_TELEGRAM_ID.')
+        elif update.message.sender_chat or not update.effective_user or not is_admin(update.effective_user.id,settings):await safe_reply(update.message, 'Команда доступна только администратору бота.')
+        else:await safe_reply(update.message, str(update.effective_chat.id))
     async def video_note(update,context):
         user=update.effective_user
         if not user or user.is_bot or update.message.sender_chat:return
@@ -122,7 +133,7 @@ def build_application(settings,db):
                      or getattr(update.message, 'forward_from_chat', None) is not None)
         if forwarded:
             if settings.pushup_results_enabled:
-                await update.message.reply_text(
+                await safe_reply(update.message, 
                     '↪️ Пересланный кружок не засчитывается. Отправьте новый кружок прямо в эту группу.')
             return
         day = today_moscow()
@@ -135,7 +146,7 @@ def build_application(settings,db):
                 db.previously_seen_video, chat_id,
                 update.message.video_note.file_id, update.message.message_id)
             if already_seen:
-                await update.message.reply_text(
+                await safe_reply(update.message, 
                     '♻️ Этот кружок уже присылали в чат. Повторные видео не засчитываются — запиши новый кружок!')
                 return
             attempt = await asyncio.to_thread(
