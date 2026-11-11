@@ -174,6 +174,7 @@ async def data(request: Request, authorization: str | None = Header(None),
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
             'daily_norm': daily_norm,
+            'allow_forwarded_videos': db.forwarded_videos_enabled(chat_id),
             'legend': legend,
             'is_admin': request.app.state.settings.admin_telegram_id is not None and user_id == request.app.state.settings.admin_telegram_id,
             'date': day.isoformat(), 'selected_date': chosen.isoformat(),
@@ -230,6 +231,27 @@ async def send_manual_summary(request: Request, authorization: str | None = Head
         logger.exception('Manual scheduled summary failed')
         raise HTTPException(503, 'Не удалось отправить сводку') from None
     return {'sent': True, 'report_date': day.isoformat()}
+
+
+@router.post('/api/miniapp/forwarded-videos')
+async def update_forwarded_videos(request: Request, authorization: str | None = Header(None)):
+    user_id, chat_id, db = authenticate(request, authorization)
+    if request.app.state.settings.admin_telegram_id is None or user_id != request.app.state.settings.admin_telegram_id:
+        raise HTTPException(403, 'Только администратор может менять настройку пересылки')
+    try:
+        payload = await request.json()
+        enabled = payload.get('enabled')
+        if type(enabled) is not bool:
+            raise ValueError('Expected boolean')
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, 'Поле enabled должно быть true или false') from None
+    def save():
+        member = db.member(chat_id, user_id)
+        if not member or not member.get('active'):
+            raise HTTPException(403, 'Сначала зарегистрируйтесь через /join')
+        db.set_forwarded_videos_enabled(chat_id, enabled)
+    await asyncio.to_thread(save)
+    return {'allow_forwarded_videos': enabled}
 
 
 @router.post('/api/miniapp/daily-norm')
