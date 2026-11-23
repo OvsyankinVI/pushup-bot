@@ -121,7 +121,11 @@ def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date
     for member in members:
         sick = sick_leaves.get(member['telegram_user_id'])
         if sick:
-            lines.append(f"🏥 {member['display_name']} — больняк ({sick['starts_on']}–{sick['ends_on']}); отжимания за здоровые дни сохранены")
+            begin = max(week_start, date.fromisoformat(sick['starts_on']))
+            finish = min(end, date.fromisoformat(sick['ends_on']))
+            if begin <= finish:
+                days = (finish - begin).days + 1
+                lines.append(f"🏥 {member['display_name']} — больняк {begin:%d.%m}–{finish:%d.%m} ({days} дн.); остальные дни недели учитываются обычно")
     if len(lines) == 2:
         lines.append('Пока нет засчитанных отжиманий.')
     week_total = sum(max(0, int(v)) for v in totals.values())
