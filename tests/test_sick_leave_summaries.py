@@ -27,6 +27,22 @@ class SickLeaveSummaryTests(unittest.TestCase):
         self.assertIn('Не выполнили: 1/1', text)
         self.assertNotIn('❌ Пациент', text)
 
+    def test_weekly_quota_only_counts_healthy_days(self):
+        from datetime import timedelta
+        start = self.day
+        sick = {1: [
+            {'starts_on': '2026-11-23', 'ends_on': '2026-11-24'},
+            {'starts_on': '2026-11-27', 'ends_on': '2026-11-27'},
+        ]}
+        daily = {start + timedelta(days=i): {1: 20 if i in (2, 3) else 0, 2: 20}
+                 for i in range(7)}
+        result = weekly_summary(self.members, {1: 40, 2: 140}, start,
+                                sick_leaves=sick, daily_totals=daily,
+                                daily_norm=20, through_date=start + timedelta(days=4))
+        self.assertIn('Пациент — норма 2/2 дн.', result)
+        self.assertIn('Спортсмен — норма 5/5 дн.', result)
+        self.assertIn('Всего за неделю: 180', result)
+
     def test_week_preserves_pushups_and_shows_leave(self):
         text = weekly_summary(self.members, {1: 40, 2: 50}, self.day, sick_leaves=self.sick)
         self.assertIn('🏥 Пациент', text)
