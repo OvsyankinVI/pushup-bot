@@ -48,24 +48,64 @@ def _load(db, chat_id, leave_id):
     return rows[0]
 
 
+def _event_text(db, event):
+    before = event.get('before_state') or {}
+    after = event.get('after_state') or {}
+    state = after or before
+    patient = db.member(event['chat_id'], state['patient_id'])
+    actor = db.member(event['chat_id'], event['actor_id'])
+    name = (patient or {}).get('display_name') or str(state['patient_id'])
+    doctor = (actor or {}).get('display_name') or str(event['actor_id'])
+    def period(item):
+        return f"{item['starts_on']} — {item['ends_on']}"
+    kind = event['event_type']
+    if kind == 'created':
+        return f"🏥 Открыт больняк!\\n🤒 Пациент: {name}\\n📅 {period(after)}\\n👨‍⚕️ Врач: {doctor}"
+    if kind == 'updated':
+        return f"🩺 Больняк изменён!\\n🤒 Пациент: {name}\\n📅 Было: {period(before)}\\n📅 Стало: {period(after)}\\n👨‍⚕️ Врач: {doctor}"
+    if kind == 'deleted':
+        return f"❌ Больняк аннулирован!\\n🤒 Пациент: {name}\\n📅 {period(before)}\\n👨‍⚕️ Аннулировал: {doctor}"
+    return f"🎉 {name} наконец-то выздоровел и возвращается к отжиманиям! 🏋️"
+
+
+async def deliver_sick_leave_events(request, chat_id: int, event_ids=None):
+    """Retryable outbox. Sequential delivery; a crash between send and ack may duplicate."""
+    db = request.app.state.db
+    def load():
+        query = (db.client.table('sick_leave_events').select('*')
+                 .eq('chat_id', chat_id).is_('delivered_at', 'null')
+                 .order('id').limit(50))
+        if event_ids is not None:
+            query = query.in_('id', event_ids)
+        return query.execute().data
+    events = await asyncio.to_thread(load)
+    sent = 0
+    for event in events:
+        text = await asyncio.to_thread(_event_text, db, event)
+        try:
+            await request.app.state.telegram.bot.send_message(chat_id=chat_id, text=text)
+        except Exception:
+            log.exception('Sick leave outbox delivery failed: event=%s', event['id'])
+            await asyncio.to_thread(lambda: db.client.table('sick_leave_events')
+                .update({'delivery_attempts': event['delivery_attempts'] + 1})
+                .eq('id', event['id']).execute())
+            break
+        await asyncio.to_thread(lambda: db.client.table('sick_leave_events')
+            .update({'delivered_at': datetime.now(timezone.utc).isoformat(),
+                     'delivery_attempts': event['delivery_attempts'] + 1})
+            .eq('id', event['id']).execute())
+        sent += 1
+    return sent
+
+
 async def _notify(request, chat_id, db, event, before, after, actor):
-    patient_id = (after or before)['patient_id']
-    patient = await asyncio.to_thread(db.member, chat_id, patient_id)
-    name = (patient or {}).get('display_name') or str(patient_id)
-    actor_name = actor['display_name']
-    def period(row):
-        return f"{row['starts_on']} — {row['ends_on']}"
-    if event == 'created':
-        message = f'🏥 Открыт больняк!\n🤒 Пациент: {name}\n📅 {period(after)}\n👨‍⚕️ Врач: {actor_name}'
-    elif event == 'updated':
-        message = f'🩺 Больняк изменён!\n🤒 Пациент: {name}\n📅 Было: {period(before)}\n📅 Стало: {period(after)}\n👨‍⚕️ Врач: {actor_name}'
-    else:
-        message = f'❌ Больняк аннулирован!\n🤒 Пациент: {name}\n📅 {period(before)}\n👨‍⚕️ Аннулировал: {actor_name}'
+    # Audit trigger creates outbox event in the same database transaction.
+    # Attempt immediate delivery; failed sends remain queued for cron retry.
     try:
-        await request.app.state.telegram.bot.send_message(chat_id=chat_id, text=message)
+        await deliver_sick_leave_events(request, chat_id)
         return True
     except Exception:
-        log.exception('Sick leave notification failed')
+        log.exception('Sick leave event queued but immediate delivery failed')
         return False
 
 
