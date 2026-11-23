@@ -182,17 +182,30 @@ async def sick_leave_recovery(request: Request, secret: str | None = Header(None
                 .eq('ends_on', yesterday).execute().data)
     leaves = await asyncio.to_thread(load)
     created = 0
+    active_today = await asyncio.to_thread(db.sick_leaves_for_day, chat_id, today)
     for leave in leaves:
+        if int(leave['patient_id']) in active_today:
+            continue
         def prepare():
+            # The partial unique index makes duplicate concurrent cron calls safe.
             existing = (db.client.table('sick_leave_events').select('id')
                         .eq('sick_leave_id', leave['id']).eq('event_type', 'recovered')
                         .limit(1).execute().data)
             if existing:
                 return False
-            db.client.table('sick_leave_events').insert({
-                'sick_leave_id': leave['id'], 'chat_id': chat_id,
-                'actor_id': leave['patient_id'], 'event_type': 'recovered',
-                'after_state': leave}).execute()
+            try:
+                db.client.table('sick_leave_events').insert({
+                    'sick_leave_id': leave['id'], 'chat_id': chat_id,
+                    'actor_id': leave['patient_id'], 'event_type': 'recovered',
+                    'after_state': leave}).execute()
+            except Exception:
+                # A concurrent cron request may have inserted the same event.
+                concurrent = (db.client.table('sick_leave_events').select('id')
+                              .eq('sick_leave_id', leave['id']).eq('event_type', 'recovered')
+                              .limit(1).execute().data)
+                if concurrent:
+                    return False
+                raise
             return True
         if await asyncio.to_thread(prepare):
             created += 1
