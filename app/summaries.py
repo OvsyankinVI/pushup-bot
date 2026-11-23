@@ -106,7 +106,9 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
 
 
 def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date,
-                   manual_totals: dict[int, int] | None = None, sick_leaves: dict[int, dict] | None = None) -> str:
+                   manual_totals: dict[int, int] | None = None, sick_leaves: dict[int, list[dict]] | None = None,
+                   daily_totals: dict[date, dict[int, int]] | None = None,
+                   daily_norm: int | None = None, through_date: date | None = None) -> str:
     manual_totals = manual_totals or {}
     sick_leaves = sick_leaves or {}
     end = week_start + timedelta(days=6)
@@ -127,6 +129,25 @@ def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date
             if begin <= finish:
                 days = (finish - begin).days + 1
                 lines.append(f"🏥 {member['display_name']} — больняк {begin:%d.%m}–{finish:%d.%m} ({days} дн.); остальные дни недели учитываются обычно")
+    if daily_totals is not None and daily_norm is not None:
+        # Only completed/current days count; never charge future days.
+        last_day = min(end, through_date or end)
+        for member in members:
+            uid = member['telegram_user_id']
+            periods = sick_leaves.get(uid, [])
+            if isinstance(periods, dict):
+                periods = [periods]
+            eligible_days = [
+                week_start + timedelta(days=i)
+                for i in range(max(0, (last_day - week_start).days + 1))
+                if not any(s['starts_on'] <= (week_start + timedelta(days=i)).isoformat()
+                           <= s['ends_on'] for s in periods)
+            ]
+            completed = sum(
+                int(daily_totals.get(d, {}).get(uid, 0) or 0) >= daily_norm
+                for d in eligible_days
+            )
+            lines.append(f"🎯 {member['display_name']} — норма {completed}/{len(eligible_days)} дн.")
     if len(lines) == 2:
         lines.append('Пока нет засчитанных отжиманий.')
     week_total = sum(max(0, int(v)) for v in totals.values())
