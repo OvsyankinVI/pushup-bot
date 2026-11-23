@@ -4,7 +4,7 @@ All reads and writes are scoped to the configured Telegram chat. Dates are inclu
 """
 import asyncio
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
@@ -149,7 +149,7 @@ async def update_sick_leave(leave_id: int, request: Request, authorization: str 
             return actor, old, old
         rows = (db.client.table('sick_leaves')
                 .update({'starts_on': start, 'ends_on': end, 'updated_by': uid,
-                         'updated_at': 'now()'})
+                         'updated_at': datetime.now(timezone.utc).isoformat()})
                 .eq('chat_id', chat_id).eq('id', leave_id).is_('deleted_at', 'null')
                 .execute().data)
         return actor, old, rows[0]
@@ -172,7 +172,7 @@ async def delete_sick_leave(leave_id: int, request: Request, authorization: str 
         actor = _active_member(db, chat_id, uid)
         old = _load(db, chat_id, leave_id)
         db.client.table('sick_leaves').update({
-            'deleted_at': 'now()', 'deleted_by': uid}).eq('chat_id', chat_id).eq('id', leave_id).execute()
+            'deleted_at': datetime.now(timezone.utc).isoformat(), 'deleted_by': uid}).eq('chat_id', chat_id).eq('id', leave_id).execute()
         return actor, old
     actor, old = await asyncio.to_thread(save)
     notified = await _notify(request, chat_id, db, 'deleted', old, None, actor)
