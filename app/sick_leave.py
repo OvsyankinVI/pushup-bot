@@ -67,7 +67,6 @@ def _event_text(db, event):
         return f"❌ Больняк аннулирован!\n🤒 Пациент: {name}\n📅 {period(before)}\n👨‍⚕️ Аннулировал: {doctor}"
     return f"🎉 {name} наконец-то выздоровел и возвращается к отжиманиям! 🏋️"
 
-
 async def deliver_sick_leave_events(request, chat_id: int, event_ids=None):
     """Retryable outbox. Sequential delivery; a crash between send and ack may duplicate."""
     lock = getattr(request.app.state, 'sick_leave_delivery_lock', None)
