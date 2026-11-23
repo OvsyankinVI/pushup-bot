@@ -70,6 +70,14 @@ def _event_text(db, event):
 
 async def deliver_sick_leave_events(request, chat_id: int, event_ids=None):
     """Retryable outbox. Sequential delivery; a crash between send and ack may duplicate."""
+    lock = getattr(request.app.state, 'sick_leave_delivery_lock', None)
+    if lock is None:
+        raise RuntimeError('Sick leave delivery lock is not initialized')
+    async with lock:
+        return await _deliver_sick_leave_events_locked(request, chat_id, event_ids)
+
+
+async def _deliver_sick_leave_events_locked(request, chat_id: int, event_ids=None):
     db = request.app.state.db
     def load():
         query = (db.client.table('sick_leave_events').select('*')
