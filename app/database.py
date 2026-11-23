@@ -260,4 +260,7 @@ class Database:
                 .eq('chat_id', chat_id).is_('deleted_at', 'null')
                 .lte('starts_on', end.isoformat()).gte('ends_on', start.isoformat())
                 .execute().data)
-        return {int(row['patient_id']): row for row in rows}
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(int(row['patient_id']), []).append(row)
+        return grouped
