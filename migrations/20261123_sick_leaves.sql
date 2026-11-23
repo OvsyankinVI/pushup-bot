@@ -51,7 +51,7 @@ revoke all on public.sick_leave_doctors, public.sick_leaves, public.sick_leave_e
 revoke all on sequence public.sick_leaves_id_seq, public.sick_leave_events_id_seq from anon, authenticated;
 -- Audit events are committed atomically with sick leave mutations.
 create or replace function public.sick_leave_audit_trigger()
-returns trigger language plpgsql security invoker set search_path = '' as $
+returns trigger language plpgsql security invoker set search_path = '' as $audit$
 begin
  if tg_op = 'INSERT' then
   insert into public.sick_leave_events(sick_leave_id,chat_id,actor_id,event_type,after_state)
@@ -69,7 +69,7 @@ begin
  end if;
  return null;
 end;
-$$;
+$audit$;
 drop trigger if exists sick_leave_audit on public.sick_leaves;
 create trigger sick_leave_audit after insert or update on public.sick_leaves
 for each row execute function public.sick_leave_audit_trigger();
