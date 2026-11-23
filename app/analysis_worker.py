@@ -6,6 +6,7 @@ import sys
 import logging
 import os
 import tempfile
+import time
 from datetime import date, datetime, timezone
 
 from app.admin_alerts import send_admin_alert
@@ -67,6 +68,7 @@ async def process_attempt(application, settings, db, attempt):
     message_id = attempt['telegram_message_id']
     day = attempt['report_date']
     temp_path = None
+    started_at = time.monotonic()
     try:
         telegram_file = await application.bot.get_file(attempt['telegram_file_id'])
         with tempfile.NamedTemporaryFile(prefix='pushup_', suffix='.mp4', delete=False) as f:
@@ -82,7 +84,12 @@ async def process_attempt(application, settings, db, attempt):
         media_digest = digest.hexdigest()
         media_size = os.path.getsize(temp_path)
 
+        downloaded_at = time.monotonic()
+        logger.info('Video input attempt=%s bytes=%s download_seconds=%.2f',
+                    attempt_id, media_size, downloaded_at - started_at)
         metrics = await _isolated_pose_analysis(temp_path, attempt_id)
+        logger.info('Video recognition attempt=%s analysis_seconds=%.2f',
+                    attempt_id, time.monotonic() - downloaded_at)
         world = metrics.get('world_geometry') or {}
         classification = classify_pushup_attempt(metrics)
         status = classification['status']
@@ -91,7 +98,7 @@ async def process_attempt(application, settings, db, attempt):
         # Persist overlay trace best-effort; never block or alter the scored result.
         try:
             overlay_trace = metrics.get('overlay_trace')
-            if overlay_trace:
+            if settings.pushup_overlay_diagnostics_enabled and overlay_trace:
                 await asyncio.to_thread(lambda: db.client.table('pushup_overlay_diagnostics').upsert({
                     'attempt_id': attempt_id,
                     'trace': overlay_trace,
@@ -174,8 +181,8 @@ async def process_attempt(application, settings, db, attempt):
             await application.bot.send_message(
                 chat_id=chat_id, text=text, reply_to_message_id=message_id)
 
-        logger.info('Push-up worker completed attempt_id=%s status=%s count=%s gated_count=%s',
-                    attempt_id,status,count,world.get('gated_pushup_count',0))
+        logger.info('Push-up worker completed attempt_id=%s status=%s count=%s gated_count=%s total_seconds=%.2f',
+                    attempt_id,status,count,world.get('gated_pushup_count',0),time.monotonic()-started_at)
     except Exception as exc:
         try:
             rows = await asyncio.to_thread(
