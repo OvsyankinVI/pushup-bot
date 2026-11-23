@@ -93,7 +93,6 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     lines.extend(['', f'Отжались: {completed}/{len(eligible)}',
                   f'🏋️ Всего отжиманий: {total-manual_sum} (+{manual_sum}) = {total}' if manual_sum else f'🏋️ Всего отжиманий: {total}'])
     # Daily quota is based on accepted pushups, including manual adjustments.
-    eligible = [m for m in members if m['telegram_user_id'] not in sick_leaves]
     incomplete = ([m for m in eligible if totals.get(m['telegram_user_id'], 0) < daily_norm]
                   if daily_norm is not None else
                   [m for m in eligible if m['telegram_user_id'] not in reported])
