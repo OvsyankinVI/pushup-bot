@@ -156,7 +156,8 @@ async def list_sick_leaves(request: Request, authorization: str | None = Header(
 @router.put('/api/miniapp/sick-leaves/doctors')
 async def set_doctors(request: Request, authorization: str | None = Header(None)):
     uid, chat_id, db = authenticate(request, authorization)
-    if uid != request.app.state.settings.admin_telegram_id:
+    if (request.app.state.settings.admin_telegram_id is None
+            or uid != request.app.state.settings.admin_telegram_id):
         raise HTTPException(403, 'Назначать врачей может только администратор')
     payload = await request.json()
     ids = payload.get('doctor_ids')
@@ -209,7 +210,7 @@ async def create_sick_leave(request: Request, authorization: str | None = Header
         log.exception('Sick leave creation failed')
         raise HTTPException(409, 'Не удалось создать больничный. Проверьте пересечение дат') from None
     notified = await _notify(request, chat_id, db, 'created', None, row, actor)
-    return {'leave': row, 'notified': notified}
+    return {'leave': row, 'notification_attempted': notified}
 
 
 @router.patch('/api/miniapp/sick-leaves/{leave_id}')
@@ -237,7 +238,7 @@ async def update_sick_leave(leave_id: int, request: Request, authorization: str 
         log.exception('Sick leave update failed')
         raise HTTPException(409, 'Не удалось изменить больничный. Проверьте пересечение дат') from None
     notified = True if old == row else await _notify(request, chat_id, db, 'updated', old, row, actor)
-    return {'leave': row, 'notified': notified}
+    return {'leave': row, 'notification_attempted': notified}
 
 
 @router.delete('/api/miniapp/sick-leaves/{leave_id}')
@@ -252,4 +253,4 @@ async def delete_sick_leave(leave_id: int, request: Request, authorization: str 
         return actor, old
     actor, old = await asyncio.to_thread(save)
     notified = await _notify(request, chat_id, db, 'deleted', old, None, actor)
-    return {'ok': True, 'notified': notified}
+    return {'ok': True, 'notification_attempted': notified}
