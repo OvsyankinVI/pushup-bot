@@ -157,3 +157,55 @@ async def evening(request: Request, secret: str | None = Header(None, alias='X-C
 @app.post('/cron/midnight')
 async def midnight(request: Request, secret: str | None = Header(None, alias='X-Cron-Secret')):
     return await send_summary(request, secret, 'midnight')
+
+
+@app.post('/cron/sick-leave-recovery')
+async def sick_leave_recovery(request: Request, secret: str | None = Header(None, alias='X-Cron-Secret')):
+    """Run at 09:00 Europe/Moscow. An expired leave returns on the following day."""
+    from datetime import timedelta
+    check_secret(secret, request.app.state.settings.cron_secret)
+    chat_id = request.app.state.settings.telegram_chat_id
+    if chat_id is None:
+        raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
+    db = request.app.state.db
+    today = today_moscow()
+    yesterday = (today - timedelta(days=1)).isoformat()
+    def load():
+        return (db.client.table('sick_leaves').select('id,patient_id,starts_on,ends_on')
+                .eq('chat_id', chat_id).is_('deleted_at', 'null')
+                .eq('ends_on', yesterday).execute().data)
+    leaves = await asyncio.to_thread(load)
+    sent = 0
+    for leave in leaves:
+        def prepare():
+            existing = (db.client.table('sick_leave_events').select('id,delivered_at')
+                        .eq('sick_leave_id', leave['id']).eq('event_type', 'recovered')
+                        .limit(1).execute().data)
+            if existing and existing[0]['delivered_at']:
+                return None
+            if existing:
+                return existing[0]['id']
+            result = db.client.table('sick_leave_events').insert({
+                'sick_leave_id': leave['id'], 'chat_id': chat_id,
+                'actor_id': leave['patient_id'], 'event_type': 'recovered',
+                'after_state': leave}).execute().data
+            return result[0]['id']
+        event_id = await asyncio.to_thread(prepare)
+        if event_id is None:
+            continue
+        patient = await asyncio.to_thread(db.member, chat_id, leave['patient_id'])
+        name = (patient or {}).get('display_name') or str(leave['patient_id'])
+        try:
+            await request.app.state.telegram.bot.send_message(
+                chat_id=chat_id,
+                text=f'🎉 {name} наконец-то выздоровел и возвращается к отжиманиям! 🏋️')
+            await asyncio.to_thread(
+                lambda: db.client.table('sick_leave_events')
+                .update({'delivered_at': __import__('datetime').datetime.now(
+                    __import__('datetime').timezone.utc).isoformat()})
+                .eq('id', event_id).execute())
+            sent += 1
+        except Exception:
+            logger.exception('Sick leave recovery notification failed')
+            raise HTTPException(503, 'Recovery notification failed') from None
+    return {'status': 'ok', 'recovered': sent}
