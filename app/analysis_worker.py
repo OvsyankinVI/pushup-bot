@@ -95,18 +95,6 @@ async def process_attempt(application, settings, db, attempt):
         status = classification['status']
         reason = classification['reason']
         count = int(classification.get('count') or 0)
-        # Persist overlay trace best-effort; never block or alter the scored result.
-        try:
-            overlay_trace = metrics.get('overlay_trace')
-            if settings.pushup_overlay_diagnostics_enabled and overlay_trace:
-                await asyncio.to_thread(lambda: db.client.table('pushup_overlay_diagnostics').upsert({
-                    'attempt_id': attempt_id,
-                    'trace': overlay_trace,
-                    'classification': {'status': status, 'reason': reason, 'count': count,
-                                       'world_geometry': {'segment_details': world.get('segment_details')}}
-                }).execute())
-        except Exception as exc:
-            logger.warning('Production overlay trace persistence failed attempt=%s error=%s', attempt_id, type(exc).__name__)
         confidence = round(float(metrics.get('usable_ratio') or 0), 4)
         front = metrics.get('front_cycles') or {}
         logger.info(
