@@ -73,7 +73,7 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     totals = pushup_totals or {}
     sick_leaves = sick_leaves or {}
     ranking = leaderboard([m for m in members if m['telegram_user_id'] not in sick_leaves], totals)
-    ranking.extend((m, 0, None) for m in members if m['telegram_user_id'] in sick_leaves)
+    ranking.extend((m, max(0, int(totals.get(m['telegram_user_id'], 0) or 0)), None) for m in members if m['telegram_user_id'] in sick_leaves)
     manual_totals = manual_totals or {}
     if not members:
         lines.append('Пока нет активных участников. Зарегистрируйтесь через /join.')
@@ -89,6 +89,7 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     completed = sum(score > 0 for m, score, _ in ranking if m['telegram_user_id'] not in sick_leaves)
     total = sum(score for _, score, _ in ranking)
     manual_sum = sum(manual_totals.get(m['telegram_user_id'], 0) for m in members)
+    eligible = [m for m in members if m['telegram_user_id'] not in sick_leaves]
     lines.extend(['', f'Отжались: {completed}/{len(eligible)}',
                   f'🏋️ Всего отжиманий: {total-manual_sum} (+{manual_sum}) = {total}' if manual_sum else f'🏋️ Всего отжиманий: {total}'])
     # Daily quota is based on accepted pushups, including manual adjustments.
@@ -111,7 +112,7 @@ def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date
     sick_leaves = sick_leaves or {}
     end = week_start + timedelta(days=6)
     lines = [f'🏆 Итоги недели {week_start:%d.%m}–{end:%d.%m}', '']
-    for member, score, place in leaderboard([m for m in members if m['telegram_user_id'] not in sick_leaves], totals):
+    for member, score, place in leaderboard(members, totals):
         if not score:
             continue
         icon = MEDALS[place - 1] if place <= 3 else '✅'
@@ -120,7 +121,7 @@ def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date
     for member in members:
         sick = sick_leaves.get(member['telegram_user_id'])
         if sick:
-            lines.append(f"🏥 {member['display_name']} — больняк ({sick['starts_on']}–{sick['ends_on']})")
+            lines.append(f"🏥 {member['display_name']} — больняк ({sick['starts_on']}–{sick['ends_on']}); отжимания за здоровые дни сохранены")
     if len(lines) == 2:
         lines.append('Пока нет засчитанных отжиманий.')
     week_total = sum(max(0, int(v)) for v in totals.values())
