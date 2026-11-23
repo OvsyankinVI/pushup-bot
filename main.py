@@ -38,6 +38,7 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
+            app.state.sick_leave_delivery_lock = asyncio.Lock()
             analysis_lock = asyncio.Lock()
             media_task = (asyncio.create_task(media_loop(telegram.bot, db, analysis_lock))
                           if settings.pushup_media_archive_enabled else None)
