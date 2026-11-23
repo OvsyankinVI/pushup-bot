@@ -49,3 +49,27 @@ alter table public.sick_leave_events enable row level security;
 -- No anon/authenticated policies: only server-side service role may access.
 revoke all on public.sick_leave_doctors, public.sick_leaves, public.sick_leave_events from anon, authenticated;
 revoke all on sequence public.sick_leaves_id_seq, public.sick_leave_events_id_seq from anon, authenticated;
+-- Audit events are committed atomically with sick leave mutations.
+create or replace function public.sick_leave_audit_trigger()
+returns trigger language plpgsql security invoker as $$
+begin
+ if tg_op = 'INSERT' then
+  insert into public.sick_leave_events(sick_leave_id,chat_id,actor_id,event_type,after_state)
+  values(new.id,new.chat_id,new.created_by,'created',to_jsonb(new));
+  return new;
+ elsif tg_op = 'UPDATE' then
+  if old.deleted_at is null and new.deleted_at is not null then
+   insert into public.sick_leave_events(sick_leave_id,chat_id,actor_id,event_type,before_state,after_state)
+   values(new.id,new.chat_id,new.deleted_by,'deleted',to_jsonb(old),to_jsonb(new));
+  elsif old.starts_on is distinct from new.starts_on or old.ends_on is distinct from new.ends_on then
+   insert into public.sick_leave_events(sick_leave_id,chat_id,actor_id,event_type,before_state,after_state)
+   values(new.id,new.chat_id,new.updated_by,'updated',to_jsonb(old),to_jsonb(new));
+  end if;
+  return new;
+ end if;
+ return null;
+end;
+$$;
+drop trigger if exists sick_leave_audit on public.sick_leaves;
+create trigger sick_leave_audit after insert or update on public.sick_leaves
+for each row execute function public.sick_leave_audit_trigger();
