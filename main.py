@@ -168,8 +168,13 @@ async def sick_leave_recovery(request: Request, secret: str | None = Header(None
     chat_id = request.app.state.settings.telegram_chat_id
     if chat_id is None:
         raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
+    from datetime import datetime
+    from app.summaries import MOSCOW
+    now = datetime.now(MOSCOW)
+    if now.hour != 9:
+        return {'status': 'skipped', 'reason': 'outside_09_moscow_window'}
     db = request.app.state.db
-    today = today_moscow()
+    today = today_moscow(now)
     yesterday = (today - timedelta(days=1)).isoformat()
     def load():
         return (db.client.table('sick_leaves').select('id,patient_id,starts_on,ends_on')
