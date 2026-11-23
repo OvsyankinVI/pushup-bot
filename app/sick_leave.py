@@ -89,6 +89,27 @@ async def _deliver_sick_leave_events_locked(request, chat_id: int, event_ids=Non
     events = await asyncio.to_thread(load)
     sent = 0
     for event in events:
+        if event['event_type'] == 'recovered':
+            def still_recovered():
+                rows = (db.client.table('sick_leaves').select('ends_on,deleted_at,patient_id')
+                        .eq('id', event['sick_leave_id']).eq('chat_id', chat_id)
+                        .limit(1).execute().data)
+                if not rows or rows[0]['deleted_at']:
+                    return False
+                from app.summaries import today_moscow
+                from datetime import timedelta
+                yesterday = (today_moscow() - timedelta(days=1)).isoformat()
+                if rows[0]['ends_on'] != yesterday:
+                    return False
+                # A new or extended leave may cover the patient's return day.
+                current = db.sick_leaves_for_day(chat_id, today_moscow())
+                return int(rows[0]['patient_id']) not in current
+            if not await asyncio.to_thread(still_recovered):
+                # Do not send stale recovery notices after extensions/deletions.
+                await asyncio.to_thread(lambda: db.client.table('sick_leave_events')
+                    .update({'delivered_at': datetime.now(timezone.utc).isoformat()})
+                    .eq('id', event['id']).execute())
+                continue
         text = await asyncio.to_thread(_event_text, db, event)
         try:
             await request.app.state.telegram.bot.send_message(chat_id=chat_id, text=text)
