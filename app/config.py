@@ -16,6 +16,8 @@ class Settings:
     telegram_chat_id: int | None = None
     pushup_analysis_enabled: bool = False
     pushup_results_enabled: bool = False
+    pushup_media_archive_enabled: bool = False
+    pushup_overlay_diagnostics_enabled: bool = False
 
     @classmethod
     def from_env(cls):
@@ -59,4 +61,6 @@ class Settings:
             telegram_chat_id=optional_id('TELEGRAM_CHAT_ID'),
             pushup_analysis_enabled=optional_bool('PUSHUP_ANALYSIS_ENABLED'),
             pushup_results_enabled=optional_bool('PUSHUP_RESULTS_ENABLED'),
+            pushup_media_archive_enabled=optional_bool('PUSHUP_MEDIA_ARCHIVE_ENABLED'),
+            pushup_overlay_diagnostics_enabled=optional_bool('PUSHUP_OVERLAY_DIAGNOSTICS_ENABLED'),
         )
