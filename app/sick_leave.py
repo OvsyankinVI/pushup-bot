@@ -60,11 +60,11 @@ def _event_text(db, event):
         return f"{item['starts_on']} — {item['ends_on']}"
     kind = event['event_type']
     if kind == 'created':
-        return f"🏥 Открыт больняк!\\n🤒 Пациент: {name}\\n📅 {period(after)}\\n👨‍⚕️ Врач: {doctor}"
+        return f"🏥 Открыт больняк!\n🤒 Пациент: {name}\n📅 {period(after)}\n👨‍⚕️ Врач: {doctor}"
     if kind == 'updated':
-        return f"🩺 Больняк изменён!\\n🤒 Пациент: {name}\\n📅 Было: {period(before)}\\n📅 Стало: {period(after)}\\n👨‍⚕️ Врач: {doctor}"
+        return f"🩺 Больняк изменён!\n🤒 Пациент: {name}\n📅 Было: {period(before)}\n📅 Стало: {period(after)}\n👨‍⚕️ Врач: {doctor}"
     if kind == 'deleted':
-        return f"❌ Больняк аннулирован!\\n🤒 Пациент: {name}\\n📅 {period(before)}\\n👨‍⚕️ Аннулировал: {doctor}"
+        return f"❌ Больняк аннулирован!\n🤒 Пациент: {name}\n📅 {period(before)}\n👨‍⚕️ Аннулировал: {doctor}"
     return f"🎉 {name} наконец-то выздоровел и возвращается к отжиманиям! 🏋️"
 
 
