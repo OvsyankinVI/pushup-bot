@@ -89,7 +89,14 @@ def build_application(settings,db):
         totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
         manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,start,start+timedelta(days=6))
         sick=await asyncio.to_thread(db.sick_leaves_for_period,update.effective_chat.id,start,start+timedelta(days=6))
-        await safe_reply(update.message, weekly_summary(members,totals,start,manual,sick))
+        norm=await asyncio.to_thread(db.daily_norm,update.effective_chat.id)
+        daily={}
+        for i in range(7):
+            current=start+timedelta(days=i)
+            if current>day:break
+            daily[current]=await asyncio.to_thread(db.pushup_totals,update.effective_chat.id,current)
+        await safe_reply(update.message, weekly_summary(members,totals,start,manual,sick,
+                                                        daily_totals=daily,daily_norm=norm,through_date=day))
     async def stats(update, context):
         if not await group_only(update):return
         user = update.effective_user
