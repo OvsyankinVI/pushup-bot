@@ -207,9 +207,10 @@ async def send_manual_summary(request: Request, authorization: str | None = Head
                 totals.get(m['telegram_user_id'], 0) >= norm for m in members):
             return {'sent': False, 'reason': 'all_completed', 'report_date': day.isoformat()}
         manual = await asyncio.to_thread(db.manual_totals, chat_id, day)
+        sick = await asyncio.to_thread(db.sick_leaves_for_day, chat_id, day)
         await request.app.state.telegram.bot.send_message(
             chat_id=chat_id,
-            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm, sick_leaves=sick))
     except Exception:
         logger.exception('Manual scheduled summary failed')
         raise HTTPException(503, 'Не удалось отправить сводку') from None
