@@ -38,18 +38,23 @@ async def lifespan(app):
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
             analysis_lock = asyncio.Lock()
-            media_task = asyncio.create_task(media_loop(telegram.bot, db, analysis_lock))
+            media_task = (asyncio.create_task(media_loop(telegram.bot, db, analysis_lock))
+                          if settings.pushup_media_archive_enabled else None)
+            logger.info('Media archive enabled=%s overlay diagnostics enabled=%s',
+                        settings.pushup_media_archive_enabled,
+                        settings.pushup_overlay_diagnostics_enabled)
             worker_task = None
             if settings.pushup_analysis_enabled:
                 worker_task = asyncio.create_task(worker_loop(telegram, settings, db, analysis_lock))
             try:
                 yield
             finally:
-                media_task.cancel()
-                try:
-                    await media_task
-                except asyncio.CancelledError:
-                    pass
+                if media_task:
+                    media_task.cancel()
+                    try:
+                        await media_task
+                    except asyncio.CancelledError:
+                        pass
                 if worker_task:
                     worker_task.cancel()
                     try:
