@@ -1,0 +1,22 @@
+name: Sick leave recovery 09:00 Moscow
+on:
+  schedule:
+    # GitHub scheduled workflows run in UTC; Moscow is UTC+3 year-round.
+    - cron: '5,25,45 6 * * *'
+  workflow_dispatch:
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call protected recovery endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is required"
+            exit 1
+          fi
+          curl --fail-with-body --show-error --silent --retry 3 --retry-delay 5 \
+            --max-time 90 --request POST \
+            --header "X-Cron-Secret: $CRON_SECRET" \
+            https://pushup-bot-prod-ovi.onrender.com/cron/sick-leave-recovery
