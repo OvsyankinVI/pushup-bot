@@ -148,11 +148,19 @@ async def set_doctors(request: Request, authorization: str | None = Header(None)
         members = {int(m['telegram_user_id']) for m in db.members(chat_id)}
         if not set(ids) <= members:
             raise HTTPException(400, 'Можно назначать только активных участников')
-        db.client.table('sick_leave_doctors').delete().eq('chat_id', chat_id).execute()
-        if ids:
+        existing = (db.client.table('sick_leave_doctors').select('telegram_user_id')
+                    .eq('chat_id', chat_id).execute().data)
+        current = {int(row['telegram_user_id']) for row in existing}
+        additions = set(ids) - current
+        removals = current - set(ids)
+        # Insert first so an insertion error never removes existing doctors.
+        if additions:
             db.client.table('sick_leave_doctors').insert([
                 {'chat_id': chat_id, 'telegram_user_id': doctor, 'appointed_by': uid}
-                for doctor in ids]).execute()
+                for doctor in sorted(additions)]).execute()
+        if removals:
+            (db.client.table('sick_leave_doctors').delete().eq('chat_id', chat_id)
+             .in_('telegram_user_id', list(removals)).execute())
     await asyncio.to_thread(save)
     return {'doctor_ids': ids}
 
