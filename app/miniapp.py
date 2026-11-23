@@ -153,7 +153,9 @@ async def data(request: Request, authorization: str | None = Header(None),
                     if int(a['telegram_user_id']) == uid and a['report_date'] == chosen.isoformat()]
         own_attempts = attempts_for(user_id)
         viewed_attempts = attempts_for(viewed_id)
+        sick_today = db.sick_leaves_for_day(chat_id, chosen)
         return {
+            'sick_today': sick_today,
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
             'daily_norm': daily_norm,
