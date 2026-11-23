@@ -1,0 +1,36 @@
+name: Sick leave regression tests
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'tests/**'
+      - 'main.py'
+      - 'miniapp/index.html'
+      - '.github/workflows/sick-leave-tests.yml'
+  workflow_dispatch:
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Syntax check
+        run: python -m compileall -q app main.py tests
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Validate Mini App JavaScript
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path('miniapp/index.html').read_text()
+          scripts = re.findall(r'<script[^>]*>(.*?)</script>', html, re.S | re.I)
+          if not scripts:
+              raise SystemExit('Mini App inline JavaScript not found')
+          Path('/tmp/miniapp-check.js').write_text('\n'.join(scripts))
+          PY
+          node --check /tmp/miniapp-check.js
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p 'test_sick_leave*.py' -v

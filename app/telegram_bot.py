@@ -70,14 +70,15 @@ def build_application(settings,db):
         rows=await asyncio.to_thread(db.members,update.effective_chat.id);text=('👥 Участники:\n\n'+'\n'.join(f"• {m['display_name']}" for m in rows)+f'\n\nВсего: {len(rows)}') if rows else 'Участников пока нет. Используйте /join.';await safe_reply(update.message, text)
     async def today(update,context):
         if not await group_only(update):return
-        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);await safe_reply(update.message, format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual))
+        day=today_moscow();rows,reported,totals=await asyncio.to_thread(db.summary_data,update.effective_chat.id,day);manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,day);sick=await asyncio.to_thread(db.sick_leaves_for_day,update.effective_chat.id,day);await safe_reply(update.message, format_summary(rows,reported,day,pushup_totals=totals,manual_totals=manual,sick_leaves=sick))
     async def debt(update, context):
         if not await group_only(update):return
         day = today_moscow()
         chat_id = update.effective_chat.id
         rows, _, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
         norm = await asyncio.to_thread(db.daily_norm, chat_id)
-        await safe_reply(update.message, format_daily_debt(rows, totals, norm))
+        sick = await asyncio.to_thread(db.sick_leaves_for_day, chat_id, day)
+        await safe_reply(update.message, format_daily_debt(rows, totals, norm, sick))
 
     async def week(update,context):
         if not await group_only(update):return
@@ -87,7 +88,15 @@ def build_application(settings,db):
         members=await asyncio.to_thread(db.members,update.effective_chat.id)
         totals=await asyncio.to_thread(db.weekly_pushup_totals,update.effective_chat.id,start)
         manual=await asyncio.to_thread(db.manual_totals,update.effective_chat.id,start,start+timedelta(days=6))
-        await safe_reply(update.message, weekly_summary(members,totals,start,manual))
+        sick=await asyncio.to_thread(db.sick_leaves_for_period,update.effective_chat.id,start,start+timedelta(days=6))
+        norm=await asyncio.to_thread(db.daily_norm,update.effective_chat.id)
+        daily={}
+        for i in range(7):
+            current=start+timedelta(days=i)
+            if current>day:break
+            daily[current]=await asyncio.to_thread(db.pushup_totals,update.effective_chat.id,current)
+        await safe_reply(update.message, weekly_summary(members,totals,start,manual,sick,
+                                                        daily_totals=daily,daily_norm=norm,through_date=day))
     async def stats(update, context):
         if not await group_only(update):return
         user = update.effective_user

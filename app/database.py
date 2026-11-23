@@ -247,3 +247,20 @@ class Database:
         rows = (self.client.table('daily_reports').select('telegram_user_id')
                 .eq('chat_id', chat_id).eq('report_date', day.isoformat()).execute().data)
         return members, {row['telegram_user_id'] for row in rows}, self.pushup_totals(chat_id, day)
+
+    def sick_leaves_for_day(self, chat_id: int, day: date) -> dict[int, dict]:
+        rows = (self.client.table('sick_leaves').select('patient_id,starts_on,ends_on')
+                .eq('chat_id', chat_id).is_('deleted_at', 'null')
+                .lte('starts_on', day.isoformat()).gte('ends_on', day.isoformat())
+                .execute().data)
+        return {int(row['patient_id']): row for row in rows}
+
+    def sick_leaves_for_period(self, chat_id: int, start: date, end: date) -> dict[int, dict]:
+        rows = (self.client.table('sick_leaves').select('patient_id,starts_on,ends_on')
+                .eq('chat_id', chat_id).is_('deleted_at', 'null')
+                .lte('starts_on', end.isoformat()).gte('ends_on', start.isoformat())
+                .execute().data)
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(int(row['patient_id']), []).append(row)
+        return grouped

@@ -15,6 +15,7 @@ from app.safe_logging import log_exception
 from app.summaries import format_summary, midnight_report_date, today_moscow
 from app.telegram_bot import build_application, update_failed
 from app.miniapp import router as miniapp_router
+from app.sick_leave import router as sick_leave_router, deliver_sick_leave_events
 from app.production_media import media_loop
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ async def lifespan(app):
             app.state.db = db
             app.state.telegram = telegram
             app.state.update_lock = asyncio.Lock()
+            app.state.sick_leave_delivery_lock = asyncio.Lock()
             analysis_lock = asyncio.Lock()
             media_task = (asyncio.create_task(media_loop(telegram.bot, db, analysis_lock))
                           if settings.pushup_media_archive_enabled else None)
@@ -69,6 +71,7 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(miniapp_router)
+app.include_router(sick_leave_router)
 
 
 def check_secret(provided: str | None, expected: str):
@@ -127,13 +130,14 @@ async def send_summary(request, secret, kind):
         members, reported, totals = await asyncio.to_thread(
             request.app.state.db.summary_data, settings.telegram_chat_id, day)
         norm = await asyncio.to_thread(request.app.state.db.daily_norm, settings.telegram_chat_id)
+        sick = await asyncio.to_thread(request.app.state.db.sick_leaves_for_day, settings.telegram_chat_id, day)
         if kind == 'midnight' and all(
-                totals.get(member['telegram_user_id'], 0) >= norm for member in members):
+                member['telegram_user_id'] in sick or totals.get(member['telegram_user_id'], 0) >= norm for member in members):
             return {'status': 'ok', 'report_date': day.isoformat()}
         manual = await asyncio.to_thread(request.app.state.db.manual_totals, settings.telegram_chat_id, day)
         await request.app.state.telegram.bot.send_message(
             chat_id=settings.telegram_chat_id,
-            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm, sick_leaves=sick))
     except Exception as exc:
         log_exception(logger, 'Summary failed', exc, settings)
         label = 'вечерней сводки (21:00)' if kind == 'evening' else 'ночной сводки (00:00)'
@@ -154,3 +158,66 @@ async def evening(request: Request, secret: str | None = Header(None, alias='X-C
 @app.post('/cron/midnight')
 async def midnight(request: Request, secret: str | None = Header(None, alias='X-Cron-Secret')):
     return await send_summary(request, secret, 'midnight')
+
+
+@app.post('/cron/sick-leave-recovery')
+async def sick_leave_recovery(request: Request, secret: str | None = Header(None, alias='X-Cron-Secret')):
+    """Run at 09:00 Europe/Moscow. An expired leave returns on the following day."""
+    from datetime import timedelta
+    check_secret(secret, request.app.state.settings.cron_secret)
+    chat_id = request.app.state.settings.telegram_chat_id
+    if chat_id is None:
+        raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
+    from datetime import datetime
+    from app.summaries import MOSCOW
+    now = datetime.now(MOSCOW)
+    if now.hour != 9:
+        return {'status': 'skipped', 'reason': 'outside_09_moscow_window'}
+    db = request.app.state.db
+    today = today_moscow(now)
+    yesterday = (today - timedelta(days=1)).isoformat()
+    def load():
+        return (db.client.table('sick_leaves').select('id,patient_id,starts_on,ends_on')
+                .eq('chat_id', chat_id).is_('deleted_at', 'null')
+                .eq('ends_on', yesterday).execute().data)
+    leaves = await asyncio.to_thread(load)
+    created = 0
+    active_today = await asyncio.to_thread(db.sick_leaves_for_day, chat_id, today)
+    for leave in leaves:
+        if int(leave['patient_id']) in active_today:
+            continue
+        def prepare():
+            # The partial unique index makes duplicate concurrent cron calls safe.
+            existing = (db.client.table('sick_leave_events').select('id')
+                        .eq('sick_leave_id', leave['id']).eq('event_type', 'recovered')
+                        .limit(1).execute().data)
+            if existing:
+                return False
+            try:
+                db.client.table('sick_leave_events').insert({
+                    'sick_leave_id': leave['id'], 'chat_id': chat_id,
+                    'actor_id': leave['patient_id'], 'event_type': 'recovered',
+                    'after_state': leave}).execute()
+            except Exception:
+                # A concurrent cron request may have inserted the same event.
+                concurrent = (db.client.table('sick_leave_events').select('id')
+                              .eq('sick_leave_id', leave['id']).eq('event_type', 'recovered')
+                              .limit(1).execute().data)
+                if concurrent:
+                    return False
+                raise
+            return True
+        if await asyncio.to_thread(prepare):
+            created += 1
+    sent = await deliver_sick_leave_events(request, chat_id)
+    return {'status': 'ok', 'queued_recoveries': created, 'delivered_events': sent}
+
+
+@app.post('/cron/sick-leave-notifications')
+async def sick_leave_notifications(request: Request, secret: str | None = Header(None, alias='X-Cron-Secret')):
+    check_secret(secret, request.app.state.settings.cron_secret)
+    chat_id = request.app.state.settings.telegram_chat_id
+    if chat_id is None:
+        raise HTTPException(503, 'TELEGRAM_CHAT_ID is not configured')
+    sent = await deliver_sick_leave_events(request, chat_id)
+    return {'status': 'ok', 'delivered_events': sent}

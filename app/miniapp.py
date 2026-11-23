@@ -153,7 +153,9 @@ async def data(request: Request, authorization: str | None = Header(None),
                     if int(a['telegram_user_id']) == uid and a['report_date'] == chosen.isoformat()]
         own_attempts = attempts_for(user_id)
         viewed_attempts = attempts_for(viewed_id)
+        sick_today = db.sick_leaves_for_day(chat_id, chosen)
         return {
+            'sick_today': sick_today,
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
             'daily_norm': daily_norm,
@@ -203,13 +205,14 @@ async def send_manual_summary(request: Request, authorization: str | None = Head
         members, reported, totals = await asyncio.to_thread(db.summary_data, chat_id, day)
         norm = await asyncio.to_thread(db.daily_norm, chat_id)
         # Match the scheduled midnight behavior: do not send if everyone completed.
+        sick = await asyncio.to_thread(db.sick_leaves_for_day, chat_id, day)
         if kind == 'midnight' and all(
-                totals.get(m['telegram_user_id'], 0) >= norm for m in members):
+                m['telegram_user_id'] in sick or totals.get(m['telegram_user_id'], 0) >= norm for m in members):
             return {'sent': False, 'reason': 'all_completed', 'report_date': day.isoformat()}
         manual = await asyncio.to_thread(db.manual_totals, chat_id, day)
         await request.app.state.telegram.bot.send_message(
             chat_id=chat_id,
-            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm))
+            text=format_summary(members, reported, day, kind, totals, manual, daily_norm=norm, sick_leaves=sick))
     except Exception:
         logger.exception('Manual scheduled summary failed')
         raise HTTPException(503, 'Не удалось отправить сводку') from None
