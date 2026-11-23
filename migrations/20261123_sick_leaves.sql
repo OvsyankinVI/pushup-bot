@@ -48,4 +48,4 @@ alter table public.sick_leaves enable row level security;
 alter table public.sick_leave_events enable row level security;
 -- No anon/authenticated policies: only server-side service role may access.
 revoke all on public.sick_leave_doctors, public.sick_leaves, public.sick_leave_events from anon, authenticated;
-revoke all on all sequences in schema public from anon, authenticated;
+revoke all on sequence public.sick_leaves_id_seq, public.sick_leave_events_id_seq from anon, authenticated;
