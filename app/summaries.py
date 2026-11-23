@@ -118,8 +118,10 @@ def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date
         manual = manual_totals.get(member['telegram_user_id'], 0)
         lines.append(f"{icon} {member['display_name']} — {score-manual} (+{manual}) отж." if manual else f"{icon} {member['display_name']} — {score} отж.")
     for member in members:
-        sick = sick_leaves.get(member['telegram_user_id'])
-        if sick:
+        periods = sick_leaves.get(member['telegram_user_id'], [])
+        if isinstance(periods, dict):
+            periods = [periods]
+        for sick in periods:
             begin = max(week_start, date.fromisoformat(sick['starts_on']))
             finish = min(end, date.fromisoformat(sick['ends_on']))
             if begin <= finish:
