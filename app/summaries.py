@@ -63,7 +63,7 @@ def promotion_message(before: int | None, after: int | None) -> str | None:
 
 def format_summary(members: list[dict], reported: set[int], report_date: date,
                    kind: str = 'today', pushup_totals: dict[int, int] | None = None,
-                   manual_totals: dict[int, int] | None = None, daily_norm: int | None = None) -> str:
+                   manual_totals: dict[int, int] | None = None, daily_norm: int | None = None, sick_leaves: dict[int, dict] | None = None) -> str:
     titles = {
         'today': '🏋️ Сегодня',
         'evening': '🏋️ Промежуточная сводка',
@@ -71,27 +71,34 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
     }
     lines = [titles[kind], '']
     totals = pushup_totals or {}
-    ranking = leaderboard(members, totals)
+    sick_leaves = sick_leaves or {}
+    ranking = leaderboard([m for m in members if m['telegram_user_id'] not in sick_leaves], totals)
+    ranking.extend((m, 0, None) for m in members if m['telegram_user_id'] in sick_leaves)
     manual_totals = manual_totals or {}
     if not members:
         lines.append('Пока нет активных участников. Зарегистрируйтесь через /join.')
     for member, score, place in ranking:
+        if member['telegram_user_id'] in sick_leaves:
+            sick = sick_leaves[member['telegram_user_id']]
+            lines.append(f"🏥 {member['display_name']} — больняк ({sick['starts_on']}–{sick['ends_on']})")
+            continue
         icon = MEDALS[place - 1] if place is not None and place <= 3 else ('✅' if score else '❌')
         manual = manual_totals.get(member['telegram_user_id'], 0)
         suffix = f' — {score-manual} (+{manual}) отж.' if manual else (f' — {score} отж.' if score else '')
         lines.append(f"{icon} {member['display_name']}{suffix}")
-    completed = sum(score > 0 for _, score, _ in ranking)
+    completed = sum(score > 0 for m, score, _ in ranking if m['telegram_user_id'] not in sick_leaves)
     total = sum(score for _, score, _ in ranking)
     manual_sum = sum(manual_totals.get(m['telegram_user_id'], 0) for m in members)
-    lines.extend(['', f'Отжались: {completed}/{len(members)}',
+    lines.extend(['', f'Отжались: {completed}/{len(eligible)}',
                   f'🏋️ Всего отжиманий: {total-manual_sum} (+{manual_sum}) = {total}' if manual_sum else f'🏋️ Всего отжиманий: {total}'])
     # Daily quota is based on accepted pushups, including manual adjustments.
-    incomplete = ([m for m in members if totals.get(m['telegram_user_id'], 0) < daily_norm]
+    eligible = [m for m in members if m['telegram_user_id'] not in sick_leaves]
+    incomplete = ([m for m in eligible if totals.get(m['telegram_user_id'], 0) < daily_norm]
                   if daily_norm is not None else
-                  [m for m in members if m['telegram_user_id'] not in reported])
+                  [m for m in eligible if m['telegram_user_id'] not in reported])
     if daily_norm is not None:
         lines.append(f'🎯 Суточная норма: {daily_norm} отж.')
-        lines.append(f'✅ Выполнили норму: {len(members) - len(incomplete)}/{len(members)}')
+        lines.append(f'✅ Выполнили норму: {len(eligible) - len(incomplete)}/{len(eligible)}')
     if kind != 'today' and incomplete:
         lines.extend(['', '👀 Кажется, кто-то филонит.' if kind == 'evening'
                       else '💸 Кажется, у нас появились должники.'])
@@ -99,16 +106,21 @@ def format_summary(members: list[dict], reported: set[int], report_date: date,
 
 
 def weekly_summary(members: list[dict], totals: dict[int, int], week_start: date,
-                   manual_totals: dict[int, int] | None = None) -> str:
+                   manual_totals: dict[int, int] | None = None, sick_leaves: dict[int, dict] | None = None) -> str:
     manual_totals = manual_totals or {}
+    sick_leaves = sick_leaves or {}
     end = week_start + timedelta(days=6)
     lines = [f'🏆 Итоги недели {week_start:%d.%m}–{end:%d.%m}', '']
-    for member, score, place in leaderboard(members, totals):
+    for member, score, place in leaderboard([m for m in members if m['telegram_user_id'] not in sick_leaves], totals):
         if not score:
             continue
         icon = MEDALS[place - 1] if place <= 3 else '✅'
         manual = manual_totals.get(member['telegram_user_id'], 0)
         lines.append(f"{icon} {member['display_name']} — {score-manual} (+{manual}) отж." if manual else f"{icon} {member['display_name']} — {score} отж.")
+    for member in members:
+        sick = sick_leaves.get(member['telegram_user_id'])
+        if sick:
+            lines.append(f"🏥 {member['display_name']} — больняк ({sick['starts_on']}–{sick['ends_on']})")
     if len(lines) == 2:
         lines.append('Пока нет засчитанных отжиманий.')
     week_total = sum(max(0, int(v)) for v in totals.values())
@@ -147,20 +159,24 @@ def overtaken_message(before: dict[int, int], after: dict[int, int],
             f"Ещё {new_score - after.get(former_id, 0) + 1} отж. — и вернёшь первое место!")
 
 
-def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int) -> str:
+def format_daily_debt(members: list[dict], totals: dict[int, int], norm: int, sick_leaves: dict[int, dict] | None = None) -> str:
+    sick_leaves = sick_leaves or {}
+    eligible = [m for m in members if m['telegram_user_id'] not in sick_leaves]
     progress = sorted(
         ((m['display_name'], max(0, int(totals.get(m['telegram_user_id'], 0))))
-         for m in members),
+         for m in eligible),
         key=lambda item: (item[1] >= norm, -(max(0, norm - item[1])), item[0].casefold()))
     pending = [(name, done, norm - done) for name, done in progress if done < norm]
+    sick_lines = [f"🏥 {m['display_name']} — больняк ({sick_leaves[m['telegram_user_id']]['starts_on']}–{sick_leaves[m['telegram_user_id']]['ends_on']})" for m in members if m['telegram_user_id'] in sick_leaves]
     if not pending:
-        return f'🎯 Суточная норма: {norm} отж.\n✅ Все участники выполнили норму!'
+        return '\n'.join([f'🎯 Суточная норма: {norm} отж.', '✅ Все участники выполнили норму!', *sick_lines])
     lines = [f'💸 До выполнения суточной нормы ({norm} отж.):', '']
     for name, done in progress:
         if done < norm:
             lines.append(f'❌ {name} — {done}/{norm} (осталось {norm - done})')
         else:
             lines.append(f'✅ {name} — {done}/{norm} (норма выполнена)')
-    lines.extend(['', f'👥 Не выполнили: {len(pending)}/{len(members)}',
+    lines.extend(sick_lines)
+    lines.extend(['', f'👥 Не выполнили: {len(pending)}/{len(eligible)}',
                   f'🏋️ Всего осталось: {sum(x[2] for x in pending)} отж.'])
     return '\n'.join(lines)
