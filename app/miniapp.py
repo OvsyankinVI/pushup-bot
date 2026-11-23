@@ -88,7 +88,7 @@ async def data(request: Request, authorization: str | None = Header(None),
         offset = 0
         while True:
             batch = (db.client.table('pushup_attempts')
-                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at,video_storage_path,video_status,overlay_video_path,overlay_video_status')
+                     .select('id,telegram_user_id,report_date,pushup_count,manual_adjustment,created_at')
                      .eq('chat_id', chat_id).eq('status', 'accepted')
                      .order('id').range(offset, offset + 499).execute().data)
             rows.extend(batch)
@@ -151,25 +151,8 @@ async def data(request: Request, authorization: str | None = Header(None),
         def attempts_for(uid):
             return [format_attempt(dict(a)) for a in rows
                     if int(a['telegram_user_id']) == uid and a['report_date'] == chosen.isoformat()]
-        def video_links(items):
-            for a in items:
-                if a['report_date'] < (day - timedelta(days=4)).isoformat():
-                    a['video_status'] = 'expired'
-                elif a.get('video_status') == 'ready' and a.get('video_storage_path'):
-                    try:
-                        video_path = (a.get('overlay_video_path') if a.get('overlay_video_status') == 'ready' else None) or a['video_storage_path']
-                        signed = db.client.storage.from_(BUCKET).create_signed_url(video_path, 900)
-                        a['video_annotated'] = bool(a.get('overlay_video_status') == 'ready' and a.get('overlay_video_path'))
-                        a['video_url'] = signed.get('signedURL') or signed.get('signedUrl')
-                        if not a['video_url']:
-                            a['video_status'] = 'failed'
-                    except Exception:
-                        a['video_status'] = 'failed'
-                a.pop('video_storage_path', None)
-                a.pop('overlay_video_path', None)
-            return items
-        own_attempts = video_links(attempts_for(user_id))
-        viewed_attempts = video_links(attempts_for(viewed_id))
+        own_attempts = attempts_for(user_id)
+        viewed_attempts = attempts_for(viewed_id)
         return {
             'user': {'id': user_id, 'name': next(m['display_name'] for m in members if int(m['telegram_user_id']) == user_id),
                      'username': next((m.get('username') for m in members if int(m['telegram_user_id']) == user_id), None)},
